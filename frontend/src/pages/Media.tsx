@@ -45,7 +45,7 @@ function formatSize(bytes?: number): string {
 }
 
 /** Mirror of the backend `Stream::display_label` (§6.7). */
-function streamLabel(s: Stream): string {
+export function streamLabel(s: Stream): string {
   const parts: string[] = [];
   if (s.language) parts.push(s.language);
   if (s.title && s.title.trim()) parts.push(s.title);

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueries } from "@tanstack/react-query";
 import {
   ChevronRight,
   FileVideo,
@@ -18,6 +18,8 @@ import {
   PROVIDERS,
   type LibraryEntry,
   type RootInfo,
+  type Stream,
+  type StreamsResponse,
 } from "@/lib/api";
 import { LangField, ModelField } from "./Media";
 import { cn } from "@/lib/utils";
@@ -44,6 +46,55 @@ function formatDuration(s?: number | null): string {
   if (h > 0) return `${h}h ${m}m`;
   if (m > 0) return `${m}m ${sec}s`;
   return `${sec}s`;
+}
+
+type TrackOption = {
+  key: string;
+  label: string;
+  index: number;
+  stream: Stream;
+};
+
+function trackIdentity(s: Stream): { key: string; label: string } {
+  const lang = s.language?.trim() ?? "";
+  const title = s.title?.trim() ?? "";
+  const named = [lang, title].filter(Boolean);
+  const label =
+    named.length > 0 ? named.join(" — ") : s.codec || `Stream #${s.index}`;
+  const key = (
+    named.length > 0 ? named.join("|") : s.codec || "subtitle"
+  ).toLowerCase();
+  return { key, label };
+}
+
+function buildTextOptions(subs: Stream[]): TrackOption[] {
+  const textSubs = subs.filter((s) => s.subtitle_kind === "text");
+  const totals = new Map<string, number>();
+  for (const s of textSubs) {
+    const { key } = trackIdentity(s);
+    totals.set(key, (totals.get(key) ?? 0) + 1);
+  }
+  const seen = new Map<string, number>();
+  return textSubs.map((s) => {
+    const { key: baseKey, label: baseLabel } = trackIdentity(s);
+    const total = totals.get(baseKey) ?? 1;
+    if (total === 1) {
+      return {
+        key: baseKey,
+        label: baseLabel,
+        index: s.index,
+        stream: s,
+      };
+    }
+    const occurrence = seen.get(baseKey) ?? 0;
+    seen.set(baseKey, occurrence + 1);
+    return {
+      key: `${baseKey}#${occurrence}`,
+      label: `${baseLabel} (${occurrence + 1})`,
+      index: s.index,
+      stream: s,
+    };
+  });
 }
 
 function FileIconFor({ entry }: { entry: LibraryEntry }) {
@@ -208,6 +259,10 @@ export default function Library() {
   const [description, setDescription] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [batchError, setBatchError] = useState<string | null>(null);
+  const [groupSelections, setGroupSelections] = useState<Record<
+    string,
+    string
+  >>({});
 
   const settingsQuery = useQuery({
     queryKey: ["settings"],
@@ -220,6 +275,152 @@ export default function Library() {
     enabled: batchOpen,
     staleTime: 5 * 60 * 1000,
   });
+  const streamQueries = useQueries({
+    queries: selectedEntries.map((entry) => ({
+      queryKey: ["media", "streams", root, entry.rel_path],
+      queryFn: () =>
+        api.get<StreamsResponse>("/api/media/streams", {
+          root,
+          path: entry.rel_path,
+        }),
+      enabled: batchOpen,
+      staleTime: 5 * 60 * 1000,
+      retry: false,
+    })),
+  });
+
+  type TrackState = {
+    entry: LibraryEntry;
+    status: "loading" | "error" | "none" | "image_only" | "ready";
+    error?: string | null;
+    subs: Stream[];
+    textOptions: TrackOption[];
+    signature: string | null;
+    defaultChosen: number | null;
+  };
+
+  type EffectiveTrackState = TrackState & {
+    chosen: number | null;
+    chosenStream: Stream | null;
+    translatable: boolean;
+  };
+
+  type BatchGroup = {
+    key: string;
+    states: TrackState[];
+    options: TrackOption[];
+    selectedKey: string | null;
+  };
+
+  const baseStates: TrackState[] = selectedEntries.map((entry, i) => {
+    const query = streamQueries[i];
+    if (!query?.data) {
+      return {
+        entry,
+        status: query?.error ? "error" : "loading",
+        error: query?.error?.message ?? null,
+        subs: [],
+        textOptions: [],
+        signature: null,
+        defaultChosen: null,
+      };
+    }
+    const info = query.data.info;
+    const selection = query.data.selection;
+    const subs = info.streams.filter((s) => s.kind === "subtitle");
+    const textOptions = buildTextOptions(subs);
+    const isAuto = typeof selection === "object" && selection !== null;
+    const autoIndex = isAuto ? selection.auto.stream_index : null;
+    const autoIsText =
+      autoIndex !== null &&
+      subs.find((s) => s.index === autoIndex)?.subtitle_kind === "text";
+    const preferredIndex = query.data.preferred;
+    const preferredIsText =
+      preferredIndex !== null &&
+      subs.find((s) => s.index === preferredIndex)?.subtitle_kind === "text"
+        ? preferredIndex
+        : null;
+    const defaultChosen =
+      (autoIsText ? autoIndex : null) ??
+      preferredIsText ??
+      textOptions[0]?.index ??
+      null;
+    const status =
+      textOptions.length > 0
+        ? "ready"
+        : selection === "none"
+          ? "none"
+          : "image_only";
+    const signature =
+      textOptions.length > 0
+        ? textOptions.map((o) => o.key).sort().join("\n")
+        : null;
+    return {
+      entry,
+      status,
+      subs,
+      textOptions,
+      signature,
+      defaultChosen,
+    };
+  });
+
+  const groupMap = new Map<string, TrackState[]>();
+  const ungroupedStates: TrackState[] = [];
+  for (const state of baseStates) {
+    if (state.signature) {
+      const arr = groupMap.get(state.signature) ?? [];
+      arr.push(state);
+      groupMap.set(state.signature, arr);
+    } else {
+      ungroupedStates.push(state);
+    }
+  }
+
+  const groups: BatchGroup[] = Array.from(groupMap.entries()).map(
+    ([key, states]) => {
+      const options = states[0].textOptions;
+      const defaultKey =
+        states[0].textOptions.find((o) => o.index === states[0].defaultChosen)
+          ?.key ?? options[0]?.key ?? null;
+      const selected = groupSelections[key];
+      const selectedKey =
+        selected && options.some((o) => o.key === selected)
+          ? selected
+          : defaultKey;
+      return { key, states, options, selectedKey };
+    },
+  );
+
+  const effectiveStates: EffectiveTrackState[] = baseStates.map((state) => {
+    if (!state.signature) {
+      const chosen = state.defaultChosen;
+      const chosenStream = state.subs.find((s) => s.index === chosen) ?? null;
+      return {
+        ...state,
+        chosen,
+        chosenStream,
+        translatable: chosenStream?.subtitle_kind === "text",
+      };
+    }
+    const group = groups.find((g) => g.key === state.signature);
+    const option = group?.selectedKey
+      ? state.textOptions.find((o) => o.key === group.selectedKey)
+      : undefined;
+    const chosen = option?.index ?? state.defaultChosen;
+    const chosenStream =
+      option?.stream ?? state.subs.find((s) => s.index === chosen) ?? null;
+    return {
+      ...state,
+      chosen,
+      chosenStream,
+      translatable: chosenStream?.subtitle_kind === "text",
+    };
+  });
+
+  const allTracksReady =
+    effectiveStates.length > 0 &&
+    effectiveStates.every((s) => s.status === "ready" && s.translatable);
 
   function openBatch() {
     const s = settingsQuery.data;
@@ -229,18 +430,24 @@ export default function Library() {
     setModel(s?.default_model ?? "");
     setTargetLang(s?.default_target_language ?? "");
     setDescription("");
+    setGroupSelections({});
     setBatchError(null);
     setBatchOpen(true);
   }
 
+  function setGroupTrack(signature: string, key: string) {
+    setGroupSelections((prev) => ({ ...prev, [signature]: key }));
+  }
+
   async function submitBatch() {
-    if (selectedEntries.length === 0) return;
+    if (selectedEntries.length === 0 || !allTracksReady) return;
     setSubmitting(true);
     setBatchError(null);
     try {
-      const bodies = selectedEntries.map((entry) => ({
+      const bodies = selectedEntries.map((entry, i) => ({
         root,
         path: entry.rel_path,
+        stream_index: effectiveStates[i]?.chosen ?? undefined,
         provider,
         model: model.trim() || undefined,
         target_language: targetLang.trim() || undefined,
@@ -438,6 +645,112 @@ export default function Library() {
               </button>
             </div>
 
+            <div className="mb-4 max-h-56 divide-y divide-border overflow-y-auto rounded-lg border border-border bg-surface-2">
+              {groups.map((g) => (
+                <div key={g.key} className="px-3 py-2 text-sm">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="min-w-0">
+                      {g.states.length === 1 ? (
+                        <p className="truncate font-medium">
+                          {g.states[0].entry.name}
+                        </p>
+                      ) : (
+                        <>
+                          <p className="font-medium">
+                            {g.states.length} files with matching subtitle names
+                          </p>
+                          <p className="text-xs text-muted">
+                            Track choice applies only to this group.
+                          </p>
+                        </>
+                      )}
+                    </div>
+                    <label className="flex items-center gap-2 text-xs">
+                      <span className="shrink-0 text-muted">Track</span>
+                      <select
+                        value={g.selectedKey ?? ""}
+                        onChange={(e) => {
+                          if (!e.target.value) return;
+                          setGroupTrack(g.key, e.target.value);
+                        }}
+                        className="min-w-0 rounded border border-border bg-surface px-2 py-1 outline-none focus:border-accent"
+                      >
+                        {g.options.map((o) => (
+                          <option key={o.key} value={o.key}>
+                            {o.label}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  </div>
+                  {g.states.length > 1 && (
+                    <div className="mt-2 flex flex-wrap gap-1">
+                      {g.states.map((s) => (
+                        <span
+                          key={s.entry.rel_path}
+                          className="inline-flex items-center gap-1 rounded bg-surface px-2 py-0.5 text-xs text-muted"
+                        >
+                          {s.entry.name}
+                          <button
+                            onClick={() => toggle(s.entry.rel_path)}
+                            title="Remove from batch"
+                            className="hover:text-danger"
+                          >
+                            <X size={12} />
+                          </button>
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                  {g.states.length === 1 && (
+                    <button
+                      onClick={() => toggle(g.states[0].entry.rel_path)}
+                      className="mt-1 text-xs text-muted hover:text-danger"
+                    >
+                      Remove from batch
+                    </button>
+                  )}
+                </div>
+              ))}
+              {ungroupedStates.map((s) => (
+                <div
+                  key={s.entry.rel_path}
+                  className="flex items-start gap-2 px-3 py-2 text-sm"
+                >
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="truncate font-medium">{s.entry.name}</p>
+                      <button
+                        onClick={() => toggle(s.entry.rel_path)}
+                        title="Remove from batch"
+                        className="text-muted hover:text-danger"
+                      >
+                        <X size={14} />
+                      </button>
+                    </div>
+                    {s.status === "loading" && (
+                      <p className="mt-0.5 text-xs text-muted">Probing…</p>
+                    )}
+                    {s.status === "error" && (
+                      <p className="mt-0.5 text-xs text-danger">
+                        {s.error ?? "probe failed"}
+                      </p>
+                    )}
+                    {s.status === "none" && (
+                      <p className="mt-0.5 text-xs text-warning">
+                        No subtitle tracks found.
+                      </p>
+                    )}
+                    {s.status === "image_only" && (
+                      <p className="mt-0.5 text-xs text-warning">
+                        Only image-based subtitle tracks (OCR required).
+                      </p>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+
             <div className="grid gap-4 sm:grid-cols-2">
               <label className="flex flex-col gap-1 text-sm">
                 <span className="text-muted">Provider</span>
@@ -497,11 +810,15 @@ export default function Library() {
               </button>
               <button
                 onClick={submitBatch}
-                disabled={submitting || selectedCount === 0}
+                disabled={submitting || selectedCount === 0 || !allTracksReady}
                 className="inline-flex items-center gap-2 rounded-lg bg-accent px-4 py-2 text-sm font-medium text-accent-foreground hover:bg-accent-2 disabled:opacity-50"
               >
                 <Send size={14} />
-                {submitting ? "Queuing…" : `Queue ${selectedCount} jobs`}
+                {submitting
+                  ? "Queuing…"
+                  : !allTracksReady
+                    ? "Waiting for subtitle tracks…"
+                    : `Queue ${selectedCount} jobs`}
               </button>
             </div>
           </div>
