@@ -102,25 +102,29 @@ export default function Media() {
     const s = settingsQuery.data;
     if (!s) return;
     prefilled.current = true;
+    let nextProvider = provider;
     if (
       s.default_provider &&
       PROVIDERS.some((p) => p.id === s.default_provider)
     ) {
-      setProvider(s.default_provider);
+      nextProvider = s.default_provider;
+      setProvider(nextProvider);
     }
-    if (s.default_model) setModel(s.default_model);
+    const rememberedModel =
+      s.default_model || (nextProvider === "custom" ? s.custom_model : "");
+    if (rememberedModel) setModel(rememberedModel);
     if (s.default_target_language) setTargetLang(s.default_target_language);
   }, [settingsQuery.data]);
 
   // Persist the current selection so it pre-fills next time (best-effort).
   async function rememberSelection() {
-    await api
-      .putSettings({
-        default_provider: provider,
-        default_model: model.trim(),
-        default_target_language: targetLang.trim(),
-      })
-      .catch(() => {});
+    const body: Parameters<typeof api.putSettings>[0] = {
+      default_provider: provider,
+      default_model: model.trim(),
+      default_target_language: targetLang.trim(),
+    };
+    if (provider === "custom") body.custom_model = model.trim();
+    await api.putSettings(body).catch(() => {});
   }
 
   async function submitUpload() {
@@ -413,7 +417,7 @@ export default function Media() {
                       <button
                         onClick={submitUpload}
                         disabled={submitting || !uploadFile}
-                        className="inline-flex items-center gap-2 rounded-lg bg-accent px-4 py-2 text-sm font-medium text-background hover:bg-accent-2 disabled:cursor-not-allowed disabled:opacity-40"
+                        className="inline-flex items-center gap-2 rounded-lg bg-accent px-4 py-2 text-sm font-medium text-accent-foreground hover:bg-accent-2 disabled:cursor-not-allowed disabled:opacity-40"
                       >
                         <Upload size={14} />
                         {submitting
@@ -441,7 +445,7 @@ export default function Media() {
                   setFormOpen((o) => !o);
                   setSubmitError(null);
                 }}
-                className="inline-flex items-center gap-2 rounded-lg bg-accent px-4 py-2 text-sm font-medium text-background transition-colors hover:bg-accent-2 disabled:cursor-not-allowed disabled:opacity-40"
+                className="inline-flex items-center gap-2 rounded-lg bg-accent px-4 py-2 text-sm font-medium text-accent-foreground transition-colors hover:bg-accent-2 disabled:cursor-not-allowed disabled:opacity-40"
               >
                 <Languages size={16} />
                 Translate
@@ -531,7 +535,7 @@ export default function Media() {
                   <button
                     onClick={submitJob}
                     disabled={submitting}
-                    className="inline-flex items-center gap-2 rounded-lg bg-accent px-4 py-2 text-sm font-medium text-background hover:bg-accent-2 disabled:opacity-50"
+                    className="inline-flex items-center gap-2 rounded-lg bg-accent px-4 py-2 text-sm font-medium text-accent-foreground hover:bg-accent-2 disabled:opacity-50"
                   >
                     <Send size={14} />
                     {submitting

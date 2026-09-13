@@ -101,6 +101,86 @@ pub async fn list_models(
     Ok(parse_models(provider, &json))
 }
 
+/// Derive the OpenAI-compatible models URL for a custom server.
+///
+/// The explicit URL wins. Otherwise the endpoint is used to infer the API
+/// prefix (e.g. `/v1/chat/completions` → `/v1/models`). If that is not
+/// possible, a `/v1/models` suffix is assumed.
+pub fn custom_models_url(
+    server: &str,
+    endpoint: Option<&str>,
+    explicit: Option<&str>,
+) -> Option<String> {
+    let server = server.trim().trim_end_matches('/');
+    if server.is_empty() {
+        return None;
+    }
+    if let Some(explicit) = explicit.map(str::trim).filter(|s| !s.is_empty()) {
+        return Some(explicit.to_string());
+    }
+    if let Some(ep_raw) = endpoint.map(str::trim).filter(|s| !s.is_empty()) {
+        let ep = if ep_raw.starts_with('/') {
+            ep_raw.to_string()
+        } else {
+            format!("/{ep_raw}")
+        };
+        if let Some(prefix) = ep.strip_suffix("/chat/completions") {
+            return Some(format!("{server}{prefix}/models"));
+        }
+        if let Some(prefix) = ep.strip_suffix("/completions") {
+            return Some(format!("{server}{prefix}/models"));
+        }
+    }
+    let path = server_path(server);
+    let has_v1 = path
+        .split('/')
+        .filter(|seg| !seg.is_empty())
+        .any(|seg| seg == "v1");
+    if has_v1 {
+        Some(format!("{server}/models"))
+    } else {
+        Some(format!("{server}/v1/models"))
+    }
+}
+
+fn server_path(server: &str) -> &str {
+    let without_scheme = server.splitn(2, "://").nth(1).unwrap_or(server);
+    let path_start = without_scheme
+        .find('/')
+        .map(|i| i + 1)
+        .unwrap_or(without_scheme.len());
+    &without_scheme[path_start..]
+}
+
+/// List models from an OpenAI-compatible custom server.
+pub async fn list_models_custom(
+    client: &reqwest::Client,
+    models_url: &str,
+    api_key: Option<&str>,
+) -> Result<Vec<String>, ModelsError> {
+    let mut req = client.get(models_url);
+    if let Some(key) = api_key.map(str::trim).filter(|k| !k.is_empty()) {
+        req = req.bearer_auth(key);
+    }
+    let resp = req
+        .send()
+        .await
+        .map_err(|e| ModelsError::Request(e.to_string()))?;
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        return Err(ModelsError::Request(format!(
+            "HTTP {status}: {}",
+            truncate(&body, 200)
+        )));
+    }
+    let json: Value = resp
+        .json()
+        .await
+        .map_err(|e| ModelsError::Request(e.to_string()))?;
+    Ok(parse_models(Provider::Custom, &json))
+}
+
 /// Extract model ids from a provider's models response.
 fn parse_models(provider: Provider, json: &Value) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
@@ -248,5 +328,62 @@ mod tests {
         let t = truncate(s, 10);
         assert!(t.len() <= 10 + 4); // 10 bytes + the ellipsis
         assert!(t.ends_with('…'));
+    }
+
+    #[test]
+    fn custom_models_url_defaults_to_v1_models() {
+        assert_eq!(
+            custom_models_url("http://localhost:11434", None, None),
+            Some("http://localhost:11434/v1/models".to_string())
+        );
+    }
+
+    #[test]
+    fn custom_models_url_uses_v1_path_from_server() {
+        assert_eq!(
+            custom_models_url("http://localhost:11434/v1", None, None),
+            Some("http://localhost:11434/v1/models".to_string())
+        );
+    }
+
+    #[test]
+    fn custom_models_url_derives_from_chat_endpoint() {
+        assert_eq!(
+            custom_models_url(
+                "http://localhost:11434",
+                Some("/v1/chat/completions"),
+                None
+            ),
+            Some("http://localhost:11434/v1/models".to_string())
+        );
+        assert_eq!(
+            custom_models_url(
+                "http://localhost:11434/api/v1",
+                Some("/chat/completions"),
+                None
+            ),
+            Some("http://localhost:11434/api/v1/models".to_string())
+        );
+    }
+
+    #[test]
+    fn custom_models_url_explicit_wins() {
+        assert_eq!(
+            custom_models_url(
+                "http://localhost:11434",
+                Some("/v1/chat/completions"),
+                Some("http://localhost:11434/custom/models")
+            ),
+            Some("http://localhost:11434/custom/models".to_string())
+        );
+    }
+
+    #[test]
+    fn custom_parse_uses_openai_data_shape() {
+        let v = json!({"object":"list","data":[{"id":"llama3.1"},{"id":"mistral"}]});
+        assert_eq!(
+            parse_models(Provider::Custom, &v),
+            vec!["llama3.1", "mistral"]
+        );
     }
 }

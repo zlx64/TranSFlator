@@ -267,6 +267,11 @@ export interface SettingsResponse {
   concurrency: number;
   auth_token_set: boolean;
   auth_token_masked: string | null;
+  custom_server_url: string;
+  custom_endpoint: string;
+  custom_model: string;
+  custom_models_url: string;
+  custom_chat: boolean;
 }
 
 export interface UpdateSettingsBody {
@@ -281,6 +286,11 @@ export interface UpdateSettingsBody {
   overwrite_behavior?: string;
   concurrency?: number;
   auth_token?: string;
+  custom_server_url?: string;
+  custom_endpoint?: string;
+  custom_model?: string;
+  custom_models_url?: string;
+  custom_chat?: boolean;
 }
 
 // ---- Model discovery (FR-11 extension) ----

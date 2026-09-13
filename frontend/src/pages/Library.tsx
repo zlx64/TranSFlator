@@ -294,7 +294,7 @@ export default function Library() {
             <>
               <button
                 onClick={openBatch}
-                className="inline-flex items-center gap-1.5 rounded-lg bg-accent px-3 py-1.5 text-sm font-medium text-background hover:bg-accent-2"
+                className="inline-flex items-center gap-1.5 rounded-lg bg-accent px-3 py-1.5 text-sm font-medium text-accent-foreground hover:bg-accent-2"
               >
                 <Languages size={14} />
                 Translate ({selectedCount})
@@ -482,7 +482,7 @@ export default function Library() {
               <button
                 onClick={submitBatch}
                 disabled={submitting || selectedCount === 0}
-                className="inline-flex items-center gap-2 rounded-lg bg-accent px-4 py-2 text-sm font-medium text-background hover:bg-accent-2 disabled:opacity-50"
+                className="inline-flex items-center gap-2 rounded-lg bg-accent px-4 py-2 text-sm font-medium text-accent-foreground hover:bg-accent-2 disabled:opacity-50"
               >
                 <Send size={14} />
                 {submitting ? "Queuing…" : `Queue ${selectedCount} jobs`}

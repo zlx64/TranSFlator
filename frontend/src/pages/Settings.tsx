@@ -3,6 +3,8 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   CheckCircle2,
   KeyRound,
+  PlugZap,
+  RefreshCw,
   Save,
   ShieldCheck,
   Trash2,
@@ -31,6 +33,15 @@ export default function Settings() {
   const [authToken, setAuthToken] = useState("");
   const [clearAuth, setClearAuth] = useState(false);
 
+  const [customServer, setCustomServer] = useState("");
+  const [customEndpoint, setCustomEndpoint] = useState("");
+  const [customModel, setCustomModel] = useState("");
+  const [customModelsUrl, setCustomModelsUrl] = useState("");
+  const [customChat, setCustomChat] = useState(true);
+  const [customModels, setCustomModels] = useState<string[]>([]);
+  const [modelsLoading, setModelsLoading] = useState(false);
+  const [modelsError, setModelsError] = useState<string | null>(null);
+
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
@@ -43,6 +54,13 @@ export default function Settings() {
     setOutputPattern(data.output_pattern);
     setOverwrite(data.overwrite_behavior);
     setConcurrency(data.concurrency);
+    setCustomServer(data.custom_server_url);
+    setCustomEndpoint(data.custom_endpoint);
+    setCustomModel(data.custom_model);
+    setCustomModelsUrl(data.custom_models_url);
+    setCustomChat(data.custom_chat);
+    setCustomModels([]);
+    setModelsError(null);
   }, [data]);
 
   async function save() {
@@ -55,6 +73,11 @@ export default function Settings() {
         output_pattern: outputPattern,
         overwrite_behavior: overwrite,
         concurrency,
+        custom_server_url: customServer.trim(),
+        custom_endpoint: customEndpoint.trim(),
+        custom_model: customModel.trim(),
+        custom_models_url: customModelsUrl.trim(),
+        custom_chat: customChat,
       };
       const api_keys: Record<string, string> = {};
       for (const [id, val] of Object.entries(apiKeys)) {
@@ -72,6 +95,8 @@ export default function Settings() {
       setClearKeys(new Set());
       setAuthToken("");
       setClearAuth(false);
+      setCustomModels([]);
+      setModelsError(null);
       setSaved(true);
     } catch (e) {
       setSubmitError(e instanceof Error ? e.message : "Failed to save settings");
@@ -79,6 +104,36 @@ export default function Settings() {
       setSaving(false);
     }
   }
+
+  async function refreshCustomModels() {
+    setModelsLoading(true);
+    setModelsError(null);
+    try {
+      const res = await api.listModels("custom");
+      if (!res.supports_list) {
+        setCustomModels([]);
+        setModelsError("Save a server URL first, then refresh models.");
+      } else if (res.error) {
+        setCustomModels([]);
+        setModelsError(res.error);
+      } else {
+        setCustomModels(res.models);
+      }
+    } catch (e) {
+      setCustomModels([]);
+      setModelsError(e instanceof Error ? e.message : "Failed to list models");
+    } finally {
+      setModelsLoading(false);
+    }
+  }
+
+  const customProvider = data?.providers.find((p) => p.id === "custom");
+  const customModelOptions =
+    customModels.length > 0
+      ? customModel && !customModels.includes(customModel)
+        ? [customModel, ...customModels]
+        : customModels
+      : [];
 
   if (isPending) {
     return (
@@ -169,6 +224,144 @@ export default function Settings() {
                 )}
               </div>
             ))}
+          </div>
+        </section>
+
+        {/* Custom OpenAI-compatible API */}
+        <section className="rounded-xl border border-border bg-surface p-5">
+          <div className="mb-4 flex items-center gap-2">
+            <PlugZap size={16} className="text-muted" />
+            <h2 className="text-sm font-semibold">
+              Custom AI API (OpenAI-compatible)
+            </h2>
+          </div>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <label className="flex flex-col gap-1 text-sm">
+              <span className="text-muted">Server URL</span>
+              <input
+                value={customServer}
+                onChange={(e) => setCustomServer(e.target.value)}
+                placeholder="http://localhost:11434"
+                className={inputCls}
+              />
+              <span className="text-xs text-muted">
+                Address only; do not include the endpoint path.
+              </span>
+            </label>
+            <label className="flex flex-col gap-1 text-sm">
+              <span className="text-muted">Endpoint</span>
+              <input
+                value={customEndpoint}
+                onChange={(e) => setCustomEndpoint(e.target.value)}
+                placeholder="/v1/chat/completions"
+                className={inputCls}
+              />
+              <span className="text-xs text-muted">
+                Defaults to /v1/chat/completions when blank.
+              </span>
+            </label>
+            <label className="flex flex-col gap-1 text-sm">
+              <span className="text-muted">API token (optional)</span>
+              <div className="flex items-center gap-2">
+                <input
+                  type="password"
+                  value={apiKeys["custom"] ?? ""}
+                  onChange={(e) => {
+                    setApiKeys((prev) => ({ ...prev, custom: e.target.value }));
+                    setClearKeys((prev) => {
+                      const next = new Set(prev);
+                      next.delete("custom");
+                      return next;
+                    });
+                  }}
+                  placeholder={
+                    customProvider?.key_set
+                      ? customProvider.key_masked ?? "•••• (set)"
+                      : "not required"
+                  }
+                  autoComplete="new-password"
+                  className={inputCls + " w-full"}
+                />
+                {customProvider?.key_set && !clearKeys.has("custom") && (
+                  <button
+                    type="button"
+                    title="Remove token"
+                    onClick={() => {
+                      setClearKeys((prev) => new Set(prev).add("custom"));
+                      setApiKeys((prev) => ({ ...prev, custom: "" }));
+                    }}
+                    className="rounded-lg border border-border p-2 text-muted hover:border-danger hover:text-danger"
+                  >
+                    <Trash2 size={14} />
+                  </button>
+                )}
+                {clearKeys.has("custom") && (
+                  <span className="text-xs text-danger">will be removed</span>
+                )}
+              </div>
+            </label>
+            <label className="flex flex-col gap-1 text-sm">
+              <span className="text-muted">Models URL (optional)</span>
+              <input
+                value={customModelsUrl}
+                onChange={(e) => setCustomModelsUrl(e.target.value)}
+                placeholder="Auto-detect (/v1/models)"
+                className={inputCls}
+              />
+            </label>
+            <div className="flex flex-col gap-1 text-sm sm:col-span-2">
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-muted">Model</span>
+                <button
+                  type="button"
+                  onClick={refreshCustomModels}
+                  disabled={modelsLoading}
+                  className="inline-flex items-center gap-1 rounded-lg border border-border px-2 py-1 text-xs text-muted hover:border-accent hover:text-foreground disabled:opacity-50"
+                >
+                  <RefreshCw
+                    size={12}
+                    className={modelsLoading ? "animate-spin" : ""}
+                  />
+                  {modelsLoading ? "Loading…" : "Refresh models"}
+                </button>
+              </div>
+              {customModelOptions.length > 0 ? (
+                <select
+                  value={customModel}
+                  onChange={(e) => setCustomModel(e.target.value)}
+                  className={inputCls}
+                >
+                  <option value="">Auto (server default)</option>
+                  {customModelOptions.map((m) => (
+                    <option key={m} value={m}>
+                      {m}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <input
+                  value={customModel}
+                  onChange={(e) => setCustomModel(e.target.value)}
+                  placeholder="e.g. llama3.1"
+                  className={inputCls}
+                />
+              )}
+              <span className="text-xs text-muted">
+                Save first, then refresh to list models from the server.
+              </span>
+              {modelsError && (
+                <span className="text-xs text-warning">{modelsError}</span>
+              )}
+            </div>
+            <label className="flex cursor-pointer items-center gap-2 text-sm sm:col-span-2">
+              <input
+                type="checkbox"
+                checked={customChat}
+                onChange={(e) => setCustomChat(e.target.checked)}
+                className="accent-[var(--color-accent)]"
+              />
+              Use chat-format requests
+            </label>
           </div>
         </section>
 
@@ -272,7 +465,7 @@ export default function Settings() {
           <button
             onClick={save}
             disabled={saving}
-            className="inline-flex items-center gap-2 rounded-lg bg-accent px-4 py-2 text-sm font-medium text-background hover:bg-accent-2 disabled:opacity-50"
+            className="inline-flex items-center gap-2 rounded-lg bg-accent px-4 py-2 text-sm font-medium text-accent-foreground hover:bg-accent-2 disabled:opacity-50"
           >
             <Save size={14} />
             {saving ? "Saving…" : "Save settings"}

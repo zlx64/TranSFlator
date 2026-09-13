@@ -28,6 +28,11 @@ vi.mock("@/lib/api", () => ({
       concurrency: 2,
       auth_token_set: false,
       auth_token_masked: null,
+      custom_server_url: "",
+      custom_endpoint: "",
+      custom_model: "",
+      custom_models_url: "",
+      custom_chat: true,
     }),
   },
   PROVIDERS: [
@@ -286,6 +291,11 @@ describe("Media page — FR-7 subtitle selection branching", () => {
       concurrency: 2,
       auth_token_set: false,
       auth_token_masked: null,
+      custom_server_url: "",
+      custom_endpoint: "",
+      custom_model: "",
+      custom_models_url: "",
+      custom_chat: true,
     });
     renderMedia();
 

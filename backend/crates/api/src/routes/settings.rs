@@ -68,6 +68,32 @@ async fn build_response(state: &AppState) -> Result<serde_json::Value, ApiError>
         .await
         .map_err(ApiError::db)?
         .unwrap_or_default();
+    let custom_server_url = settings
+        .get(keys::CUSTOM_SERVER_URL)
+        .await
+        .map_err(ApiError::db)?
+        .unwrap_or_default();
+    let custom_endpoint = settings
+        .get(keys::CUSTOM_ENDPOINT)
+        .await
+        .map_err(ApiError::db)?
+        .unwrap_or_default();
+    let custom_model = settings
+        .get(keys::CUSTOM_MODEL)
+        .await
+        .map_err(ApiError::db)?
+        .unwrap_or_default();
+    let custom_models_url = settings
+        .get(keys::CUSTOM_MODELS_URL)
+        .await
+        .map_err(ApiError::db)?
+        .unwrap_or_default();
+    let custom_chat = settings
+        .get(keys::CUSTOM_CHAT)
+        .await
+        .map_err(ApiError::db)?
+        .map(|s| s.trim() != "false")
+        .unwrap_or(true);
 
     Ok(serde_json::json!({
         "providers": providers,
@@ -79,6 +105,11 @@ async fn build_response(state: &AppState) -> Result<serde_json::Value, ApiError>
         "concurrency": eff.concurrency,
         "auth_token_set": auth_token_set,
         "auth_token_masked": auth_token_masked,
+        "custom_server_url": custom_server_url,
+        "custom_endpoint": custom_endpoint,
+        "custom_model": custom_model,
+        "custom_models_url": custom_models_url,
+        "custom_chat": custom_chat,
     }))
 }
 
@@ -108,6 +139,35 @@ pub struct UpdateSettingsBody {
     pub concurrency: Option<usize>,
     #[serde(default)]
     pub auth_token: Option<String>,
+    #[serde(default)]
+    pub custom_server_url: Option<String>,
+    #[serde(default)]
+    pub custom_endpoint: Option<String>,
+    #[serde(default)]
+    pub custom_model: Option<String>,
+    #[serde(default)]
+    pub custom_models_url: Option<String>,
+    #[serde(default)]
+    pub custom_chat: Option<bool>,
+}
+
+fn validate_custom_url(value: &str, field: &str) -> Result<String, ApiError> {
+    let v = value.trim();
+    if !(v.starts_with("http://") || v.starts_with("https://")) {
+        return Err(ApiError::bad_request(format!(
+            "{field} must start with http:// or https://"
+        )));
+    }
+    Ok(v.to_string())
+}
+
+fn normalize_custom_endpoint(value: &str) -> String {
+    let v = value.trim();
+    if v.starts_with('/') {
+        v.to_string()
+    } else {
+        format!("/{v}")
+    }
 }
 
 /// `PUT /api/settings`
@@ -204,6 +264,63 @@ pub async fn put(
                 .await
                 .map_err(ApiError::db)?;
         }
+    }
+    if let Some(v) = &body.custom_server_url {
+        if v.trim().is_empty() {
+            settings
+                .delete(keys::CUSTOM_SERVER_URL)
+                .await
+                .map_err(ApiError::db)?;
+        } else {
+            let url = validate_custom_url(v, "custom_server_url")?;
+            settings
+                .set(keys::CUSTOM_SERVER_URL, &url)
+                .await
+                .map_err(ApiError::db)?;
+        }
+    }
+    if let Some(v) = &body.custom_endpoint {
+        if v.trim().is_empty() {
+            settings
+                .delete(keys::CUSTOM_ENDPOINT)
+                .await
+                .map_err(ApiError::db)?;
+        } else {
+            settings
+                .set(keys::CUSTOM_ENDPOINT, &normalize_custom_endpoint(v))
+                .await
+                .map_err(ApiError::db)?;
+        }
+    }
+    if let Some(v) = &body.custom_model {
+        if v.trim().is_empty() {
+            settings.delete(keys::CUSTOM_MODEL).await.map_err(ApiError::db)?;
+        } else {
+            settings
+                .set(keys::CUSTOM_MODEL, v.trim())
+                .await
+                .map_err(ApiError::db)?;
+        }
+    }
+    if let Some(v) = &body.custom_models_url {
+        if v.trim().is_empty() {
+            settings
+                .delete(keys::CUSTOM_MODELS_URL)
+                .await
+                .map_err(ApiError::db)?;
+        } else {
+            let url = validate_custom_url(v, "custom_models_url")?;
+            settings
+                .set(keys::CUSTOM_MODELS_URL, &url)
+                .await
+                .map_err(ApiError::db)?;
+        }
+    }
+    if let Some(v) = body.custom_chat {
+        settings
+            .set(keys::CUSTOM_CHAT, if v { "true" } else { "false" })
+            .await
+            .map_err(ApiError::db)?;
     }
 
     Ok(Json(build_response(&state).await?))

@@ -20,6 +20,16 @@ pub mod keys {
     pub const CONCURRENCY: &str = "concurrency";
     /// Secret: the shared access token (NFR-7).
     pub const AUTH_TOKEN: &str = "auth_token";
+    /// Custom OpenAI-compatible server address (`llm-subtrans -s`).
+    pub const CUSTOM_SERVER_URL: &str = "custom_server_url";
+    /// Custom OpenAI-compatible endpoint path (`llm-subtrans -e`).
+    pub const CUSTOM_ENDPOINT: &str = "custom_endpoint";
+    /// Default model for the custom provider.
+    pub const CUSTOM_MODEL: &str = "custom_model";
+    /// Optional explicit models URL for the custom provider.
+    pub const CUSTOM_MODELS_URL: &str = "custom_models_url";
+    /// Whether the custom endpoint uses chat-format requests.
+    pub const CUSTOM_CHAT: &str = "custom_chat";
 }
 
 /// The settings key for a provider's API key, e.g. `api_key.openai`.

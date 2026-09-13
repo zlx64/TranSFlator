@@ -43,7 +43,7 @@ export default function AuthGate({ children }: { children: ReactNode }) {
         <div className="mt-4 flex gap-2">
           <button
             type="submit"
-            className="flex-1 rounded-lg bg-accent px-3 py-2 text-sm font-medium text-white hover:bg-accent-2"
+            className="flex-1 rounded-lg bg-accent px-3 py-2 text-sm font-medium text-accent-foreground hover:bg-accent-2"
           >
             Unlock
           </button>

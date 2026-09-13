@@ -11,6 +11,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::{broadcast, mpsc, Mutex, Notify, Semaphore};
 use tokio_util::sync::CancellationToken;
+use transflator_config::settings::keys;
 use transflator_config::{AppConfig, Secrets, SettingsStore};
 use transflator_media::PathGuard;
 use transflator_translate::Provider;
@@ -242,6 +243,20 @@ impl JobManager {
         if provider.requires_api_key() && !self.has_api_key(provider).await {
             return Err(ManagerError::MissingApiKey(provider.as_str().to_string()));
         }
+        if provider == Provider::Custom {
+            let settings = SettingsStore::new(&self.pool, &self.secrets);
+            let server = settings
+                .get(keys::CUSTOM_SERVER_URL)
+                .await
+                .ok()
+                .flatten()
+                .filter(|s| !s.trim().is_empty());
+            if server.is_none() {
+                return Err(ManagerError::Invalid(
+                    "custom server URL is not configured — set it in Settings".into(),
+                ));
+            }
+        }
         let job = self.store.create(new).await?;
         // "Start now" jumps ahead of normal (add-to-queue) jobs (FR-14/§13).
         let priority = if new.start_now { 1 } else { 0 };
@@ -426,6 +441,11 @@ mod tests {
             log_level: "info".into(),
         };
         let secrets = Secrets::from_app_secret("test-secret");
+        let settings = SettingsStore::new(&pool, &secrets);
+        settings
+            .set(keys::CUSTOM_SERVER_URL, "http://localhost:1234")
+            .await
+            .unwrap();
         let guard = PathGuard::new(&config.media_roots).unwrap();
         let manager = JobManager::new(config, pool, secrets, guard, runner);
         let store = JobStore::new(manager.pool.clone());

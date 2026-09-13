@@ -15,7 +15,7 @@ pub mod runner;
 
 pub use command::{build_command, validate, CommandSpec, TranslateError, TranslateOptions};
 pub use failure::{classify_failure, FailureClass};
-pub use models::{list_models, ModelsError};
+pub use models::{custom_models_url, list_models, list_models_custom, ModelsError};
 pub use progress::{parse_progress_line, Progress};
 pub use provider::Provider;
 pub use runner::{kill_tree, spawn_translation};

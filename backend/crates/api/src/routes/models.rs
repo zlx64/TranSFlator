@@ -11,8 +11,8 @@ use std::sync::Arc;
 use axum::extract::{Query, State};
 use axum::Json;
 use serde::{Deserialize, Serialize};
-use transflator_config::settings::{api_key_key, SettingsStore};
-use transflator_translate::{list_models, Provider};
+use transflator_config::settings::{api_key_key, keys, SettingsStore};
+use transflator_translate::{custom_models_url, list_models, list_models_custom, Provider};
 
 use crate::error::ApiError;
 use crate::state::AppState;
@@ -64,6 +64,60 @@ pub async fn list(
 ) -> Result<Json<ModelsResponse>, ApiError> {
     let provider = Provider::parse(&q.provider)
         .ok_or_else(|| ApiError::bad_request(format!("unknown provider: {}", q.provider)))?;
+
+    if provider == Provider::Custom {
+        let settings = SettingsStore::new(&state.pool, state.secrets.as_ref());
+        let server = settings
+            .get(keys::CUSTOM_SERVER_URL)
+            .await
+            .map_err(ApiError::db)?
+            .unwrap_or_default();
+        let endpoint = settings
+            .get(keys::CUSTOM_ENDPOINT)
+            .await
+            .map_err(ApiError::db)?;
+        let explicit = settings
+            .get(keys::CUSTOM_MODELS_URL)
+            .await
+            .map_err(ApiError::db)?;
+        if server.trim().is_empty() {
+            return Ok(Json(ModelsResponse {
+                provider: provider.as_str().to_string(),
+                supports_list: false,
+                models: Vec::new(),
+                error: None,
+            }));
+        }
+        let key = resolve_key(&state, provider).await?;
+        if let Some(url) =
+            custom_models_url(&server, endpoint.as_deref(), explicit.as_deref())
+        {
+            match list_models_custom(&state.http, &url, key.as_deref()).await {
+                Ok(models) => {
+                    return Ok(Json(ModelsResponse {
+                        provider: provider.as_str().to_string(),
+                        supports_list: true,
+                        models,
+                        error: None,
+                    }))
+                }
+                Err(e) => {
+                    return Ok(Json(ModelsResponse {
+                        provider: provider.as_str().to_string(),
+                        supports_list: true,
+                        models: Vec::new(),
+                        error: Some(e.to_string()),
+                    }))
+                }
+            }
+        }
+        return Ok(Json(ModelsResponse {
+            provider: provider.as_str().to_string(),
+            supports_list: false,
+            models: Vec::new(),
+            error: None,
+        }));
+    }
 
     if !provider.supports_model_list() {
         return Ok(Json(ModelsResponse {

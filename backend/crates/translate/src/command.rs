@@ -16,6 +16,8 @@ pub enum TranslateError {
     MissingApiKey(Provider),
     #[error("unknown provider: {0}")]
     UnknownProvider(String),
+    #[error("custom server URL is required — set it in Settings")]
+    MissingCustomServer,
 }
 
 /// All the settings needed to build a translation command.
@@ -120,6 +122,12 @@ pub fn validate(provider: Provider, options: &TranslateOptions) -> Result<(), Tr
         let key = options.api_key.as_deref().unwrap_or("").trim();
         if key.is_empty() {
             return Err(TranslateError::MissingApiKey(provider));
+        }
+    }
+    if provider == Provider::Custom {
+        let server = options.custom_server.as_deref().unwrap_or("").trim();
+        if server.is_empty() {
+            return Err(TranslateError::MissingCustomServer);
         }
     }
     Ok(())
@@ -438,8 +446,14 @@ mod tests {
             validate(Provider::OpenAi, &o),
             Err(TranslateError::MissingApiKey(Provider::OpenAi))
         ));
-        // Custom does not require a key.
-        assert!(validate(Provider::Custom, &o).is_ok());
+        // Custom does not require a key, but it does require a server URL.
+        assert!(matches!(
+            validate(Provider::Custom, &o),
+            Err(TranslateError::MissingCustomServer)
+        ));
+        let mut custom = opts();
+        custom.custom_server = Some("http://localhost:1234".into());
+        assert!(validate(Provider::Custom, &custom).is_ok());
     }
 
     #[test]

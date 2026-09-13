@@ -184,7 +184,7 @@ export default function Jobs() {
           </p>
           <Link
             to="/library"
-            className="mt-4 inline-flex items-center gap-2 rounded-lg bg-accent px-4 py-2 text-sm font-medium text-background hover:bg-accent-2"
+            className="mt-4 inline-flex items-center gap-2 rounded-lg bg-accent px-4 py-2 text-sm font-medium text-accent-foreground hover:bg-accent-2"
           >
             Browse library
           </Link>
@@ -270,7 +270,7 @@ export default function Jobs() {
                           </select>
                           <button
                             onClick={() => onRetry(job)}
-                            className="inline-flex items-center gap-1.5 rounded-lg bg-accent px-3 py-1.5 text-sm font-medium text-background hover:bg-accent-2"
+                            className="inline-flex items-center gap-1.5 rounded-lg bg-accent px-3 py-1.5 text-sm font-medium text-accent-foreground hover:bg-accent-2"
                           >
                             <RotateCw size={14} />
                             Retry

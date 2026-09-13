@@ -10,6 +10,7 @@ use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::sync::broadcast;
 use tokio_util::sync::CancellationToken;
 use transflator_config::app_config::OverwriteBehavior;
+use transflator_config::settings::keys;
 use transflator_config::{AppConfig, Secrets, SettingsStore};
 use transflator_media::classify;
 use transflator_media::disk::ensure_space;
@@ -337,6 +338,43 @@ impl JobRunner for PipelineRunner {
             // Optional context (FR-10, §13): show name / description.
             opts.movie_name = job.movie_name.clone();
             opts.description = job.description.clone();
+            // Custom OpenAI-compatible endpoint settings (§11).
+            if provider == Provider::Custom {
+                let settings = SettingsStore::new(&self.pool, &self.secrets);
+                opts.custom_server = settings
+                    .get(keys::CUSTOM_SERVER_URL)
+                    .await
+                    .map_err(|e| RunError::Failed(format!("settings read failed: {e}")))?
+                    .filter(|s| !s.trim().is_empty())
+                    .map(|s| s.trim().to_string());
+                opts.custom_endpoint = settings
+                    .get(keys::CUSTOM_ENDPOINT)
+                    .await
+                    .map_err(|e| RunError::Failed(format!("settings read failed: {e}")))?
+                    .filter(|s| !s.trim().is_empty())
+                    .map(|s| {
+                        let s = s.trim();
+                        if s.starts_with('/') {
+                            s.to_string()
+                        } else {
+                            format!("/{s}")
+                        }
+                    });
+                opts.custom_chat = settings
+                    .get(keys::CUSTOM_CHAT)
+                    .await
+                    .map_err(|e| RunError::Failed(format!("settings read failed: {e}")))?
+                    .map(|s| s.trim() != "false")
+                    .unwrap_or(true);
+                if opts.model.as_deref().map(str::trim).unwrap_or("").is_empty() {
+                    opts.model = settings
+                        .get(keys::CUSTOM_MODEL)
+                        .await
+                        .map_err(|e| RunError::Failed(format!("settings read failed: {e}")))?
+                        .filter(|s| !s.trim().is_empty())
+                        .map(|s| s.trim().to_string());
+                }
+            }
             // Retry mode mapping (FR-18).
             match job.retry_mode.as_str() {
                 "retranslate" => opts.retranslate = true,
