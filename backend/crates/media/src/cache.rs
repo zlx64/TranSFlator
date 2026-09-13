@@ -6,10 +6,21 @@
 use crate::model::MediaInfo;
 use sqlx::Row;
 use sqlx::SqlitePool;
+use std::collections::HashMap;
+
+/// Lightweight per-file metadata for the library listing (FR-2). Stream counts
+/// are derived from the stored streams (they are not columns).
+#[derive(Debug, Clone)]
+pub struct CachedMeta {
+    pub duration_s: Option<f64>,
+    pub container: Option<String>,
+    pub audio_count: u32,
+    pub subtitle_count: u32,
+}
 
 /// SQLite-backed cache of ffprobe results.
 pub struct MediaCache<'a> {
-    pool: &'a SqlitePool,
+    pub pool: &'a SqlitePool,
 }
 
 impl<'a> MediaCache<'a> {
@@ -58,6 +69,33 @@ impl<'a> MediaCache<'a> {
         .execute(self.pool)
         .await?;
         Ok(())
+    }
+
+    /// Batch lookup of cached metadata for many `(path, size, mtime)` keys.
+    /// Returns a map from the (absolute) path to its metadata; missing or stale
+    /// keys are omitted. Used to enrich library listings (FR-2) from the
+    /// existing ffprobe cache without re-probing.
+    pub async fn get_many(
+        &self,
+        keys: &[(String, u64, i64)],
+    ) -> HashMap<String, CachedMeta> {
+        let mut out = HashMap::new();
+        for (path, size, mtime) in keys {
+            if let Some(info) = self.get(path, *size, *mtime).await {
+                let (_, audio_count, subtitle_count) =
+                    crate::classify::count_kinds(&info.streams);
+                out.insert(
+                    path.clone(),
+                    CachedMeta {
+                        duration_s: info.duration_s,
+                        container: info.container,
+                        audio_count: audio_count as u32,
+                        subtitle_count: subtitle_count as u32,
+                    },
+                );
+            }
+        }
+        out
     }
 }
 

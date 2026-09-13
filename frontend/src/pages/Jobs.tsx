@@ -4,7 +4,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ChevronDown,
   ChevronRight,
-  ExternalLink,
+  Download,
   ListChecks,
   RefreshCw,
   RotateCw,
@@ -128,6 +128,15 @@ export default function Jobs() {
     try {
       await api.retryJob(job.id, mode);
       invalidate();
+    } catch (e) {
+      showError(e);
+    }
+  }
+
+  async function onDownload(job: Job) {
+    if (!job.output_path) return;
+    try {
+      await api.downloadJob(job.id, basename(job.output_path));
     } catch (e) {
       showError(e);
     }
@@ -269,10 +278,13 @@ export default function Jobs() {
                         </div>
                       )}
                       {job.output_path && (
-                        <span className="inline-flex items-center gap-1 text-xs text-success">
-                          <ExternalLink size={12} />
-                          {basename(job.output_path)}
-                        </span>
+                        <button
+                          onClick={() => onDownload(job)}
+                          className="inline-flex items-center gap-1.5 rounded-lg border border-success/40 bg-success/10 px-3 py-1.5 text-sm text-success hover:bg-success/20"
+                        >
+                          <Download size={14} />
+                          Download {basename(job.output_path)}
+                        </button>
                       )}
                       {job.error_message && (
                         <span className="text-xs text-danger">

@@ -73,6 +73,12 @@ pub struct Job {
     pub error_message: Option<String>,
     /// How the (next) run should behave; set by `retry` (FR-18).
     pub retry_mode: String,
+    /// Show-name context (`--moviename`); optional (FR-10, §13).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub movie_name: Option<String>,
+    /// Description context (`--description`); optional (FR-10, §13).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -131,4 +137,10 @@ pub struct NewJob {
     pub model: Option<String>,
     /// Uploaded external subtitle (§6.1); skips probe/extraction when set.
     pub external_subtitle_path: Option<PathBuf>,
+    /// Show-name context (`--moviename`); optional (FR-10, §13).
+    pub movie_name: Option<String>,
+    /// Description context (`--description`); optional (FR-10, §13).
+    pub description: Option<String>,
+    /// "Start now" (FR-14/§13): jump ahead of lower-priority queued jobs.
+    pub start_now: bool,
 }

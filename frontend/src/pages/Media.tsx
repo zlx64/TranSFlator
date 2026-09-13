@@ -76,6 +76,9 @@ export default function Media() {
   const [provider, setProvider] = useState("openai");
   const [model, setModel] = useState("");
   const [targetLang, setTargetLang] = useState("");
+  const [movieName, setMovieName] = useState("");
+  const [description, setDescription] = useState("");
+  const [startNow, setStartNow] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   // §6.1: external subtitle upload for files without subtitle tracks.
@@ -131,6 +134,9 @@ export default function Media() {
         provider,
         target_language: targetLang.trim() || undefined,
         model: model.trim() || undefined,
+        movie_name: movieName.trim() || undefined,
+        description: description.trim() || undefined,
+        start_now: startNow,
       });
       await rememberSelection();
       navigate("/jobs");
@@ -151,6 +157,9 @@ export default function Media() {
         target_language: targetLang.trim() || undefined,
         provider,
         model: model.trim() || undefined,
+        movie_name: movieName.trim() || undefined,
+        description: description.trim() || undefined,
+        start_now: startNow,
       });
       await rememberSelection();
       navigate("/jobs");
@@ -356,6 +365,39 @@ export default function Media() {
                       />
                     </div>
 
+                    <div className="mt-3 grid gap-3 sm:grid-cols-3">
+                      <label className="flex flex-col gap-1">
+                        <span className="text-muted">Show name (optional)</span>
+                        <input
+                          value={movieName}
+                          onChange={(e) => setMovieName(e.target.value)}
+                          placeholder="e.g. Neon Genesis Evangelion"
+                          className="rounded-lg border border-border bg-surface-2 px-3 py-2 outline-none focus:border-accent"
+                        />
+                      </label>
+                      <label className="flex flex-col gap-1 sm:col-span-2">
+                        <span className="text-muted">
+                          Additional information (optional)
+                        </span>
+                        <textarea
+                          value={description}
+                          onChange={(e) => setDescription(e.target.value)}
+                          placeholder="Short context for the model"
+                          rows={3}
+                          className="resize-y rounded-lg border border-border bg-surface-2 px-3 py-2 outline-none focus:border-accent"
+                        />
+                      </label>
+                      <label className="flex cursor-pointer items-center gap-2 self-end pb-2 text-sm sm:col-span-3">
+                        <input
+                          type="checkbox"
+                          checked={startNow}
+                          onChange={(e) => setStartNow(e.target.checked)}
+                          className="accent-[var(--color-accent)]"
+                        />
+                        Start now (jump the queue)
+                      </label>
+                    </div>
+
                     {PROVIDERS.find((p) => p.id === provider)?.needsKey && (
                       <p className="mt-2 text-xs text-warning">
                         This provider needs an API key — set it in Settings
@@ -374,7 +416,11 @@ export default function Media() {
                         className="inline-flex items-center gap-2 rounded-lg bg-accent px-4 py-2 text-sm font-medium text-background hover:bg-accent-2 disabled:cursor-not-allowed disabled:opacity-40"
                       >
                         <Upload size={14} />
-                        {submitting ? "Starting…" : "Upload & translate"}
+                        {submitting
+                          ? "Starting…"
+                          : startNow
+                            ? "Upload & start now"
+                            : "Upload & queue"}
                       </button>
                       <p className="text-xs text-muted">
                         Output is written next to the video file.
@@ -437,6 +483,39 @@ export default function Media() {
                   <LangField value={targetLang} onChange={setTargetLang} />
                 </div>
 
+                <div className="mt-4 grid gap-4 sm:grid-cols-3">
+                  <label className="flex flex-col gap-1 text-sm">
+                    <span className="text-muted">Show name (optional)</span>
+                    <input
+                      value={movieName}
+                      onChange={(e) => setMovieName(e.target.value)}
+                      placeholder="e.g. Neon Genesis Evangelion"
+                      className="rounded-lg border border-border bg-surface-2 px-3 py-2 outline-none focus:border-accent"
+                    />
+                  </label>
+                  <label className="flex flex-col gap-1 text-sm sm:col-span-2">
+                    <span className="text-muted">
+                      Additional information (optional)
+                    </span>
+                    <textarea
+                      value={description}
+                      onChange={(e) => setDescription(e.target.value)}
+                      placeholder="Short context for the model"
+                      rows={3}
+                      className="resize-y rounded-lg border border-border bg-surface-2 px-3 py-2 outline-none focus:border-accent"
+                    />
+                  </label>
+                  <label className="flex cursor-pointer items-center gap-2 self-end pb-2 text-sm sm:col-span-3">
+                    <input
+                      type="checkbox"
+                      checked={startNow}
+                      onChange={(e) => setStartNow(e.target.checked)}
+                      className="accent-[var(--color-accent)]"
+                    />
+                    Start now (jump the queue)
+                  </label>
+                </div>
+
                 {PROVIDERS.find((p) => p.id === provider)?.needsKey && (
                   <p className="mt-3 text-xs text-warning">
                     This provider needs an API key — set it in Settings (or the
@@ -455,7 +534,11 @@ export default function Media() {
                     className="inline-flex items-center gap-2 rounded-lg bg-accent px-4 py-2 text-sm font-medium text-background hover:bg-accent-2 disabled:opacity-50"
                   >
                     <Send size={14} />
-                    {submitting ? "Starting…" : "Start translation"}
+                    {submitting
+                      ? "Starting…"
+                      : startNow
+                        ? "Start now"
+                        : "Add to queue"}
                   </button>
                   <p className="text-xs text-muted">
                     Output is written next to the source file.
@@ -475,7 +558,7 @@ export default function Media() {
 
 /** Model input: a dropdown when the provider lists models, otherwise free
  *  text. A custom value not in the fetched list is preserved as an option. */
-function ModelField({
+export function ModelField({
   value,
   onChange,
   models,
@@ -527,18 +610,20 @@ function ModelField({
 
 /** Target-language dropdown. A remembered value not in the list (e.g. a
  *  custom language name) is preserved as an extra option. */
-function LangField({
+export function LangField({
   value,
   onChange,
+  label = "Target language",
 }: {
   value: string;
   onChange: (v: string) => void;
+  label?: string;
 }) {
   const options =
     value && !LANGUAGES.includes(value) ? [value, ...LANGUAGES] : LANGUAGES;
   return (
     <label className="flex flex-col gap-1 text-sm">
-      <span className="text-muted">Target language</span>
+      <span className="text-muted">{label}</span>
       <select
         value={value}
         onChange={(e) => onChange(e.target.value)}

@@ -38,6 +38,16 @@ pub struct Entry {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub size: Option<u64>,
     pub is_video: bool,
+    /// Cached ffprobe metadata (FR-2); present only when the file has been
+    /// probed (see `MediaCache`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub duration_s: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub container: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub audio_count: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub subtitle_count: Option<u32>,
 }
 
 /// Result of listing a directory.
@@ -118,6 +128,10 @@ pub fn list_dir(
                 is_dir: true,
                 size: None,
                 is_video: false,
+                duration_s: None,
+                container: None,
+                audio_count: None,
+                subtitle_count: None,
             });
         } else if file_type.is_file() {
             let video = is_video(&name);
@@ -129,6 +143,10 @@ pub fn list_dir(
                     is_dir: false,
                     size,
                     is_video: video,
+                    duration_s: None,
+                    container: None,
+                    audio_count: None,
+                    subtitle_count: None,
                 });
             }
         }
@@ -177,6 +195,10 @@ pub fn search(
             is_dir: false,
             size,
             is_video: video,
+            duration_s: None,
+            container: None,
+            audio_count: None,
+            subtitle_count: None,
         });
     }
 

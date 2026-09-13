@@ -69,6 +69,15 @@ pub struct CreateJobBody {
     /// Model name (provider-specific).
     #[serde(default)]
     pub model: Option<String>,
+    /// Show-name context (`--moviename`); optional (FR-10, §13).
+    #[serde(default)]
+    pub movie_name: Option<String>,
+    /// Description context (`--description`); optional (FR-10, §13).
+    #[serde(default)]
+    pub description: Option<String>,
+    /// "Start now" (FR-14/§13): jump ahead of lower-priority queued jobs.
+    #[serde(default)]
+    pub start_now: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -111,6 +120,9 @@ pub async fn create(
         provider: body.provider,
         model: body.model,
         external_subtitle_path: None,
+        movie_name: body.movie_name.filter(|s| !s.trim().is_empty()),
+        description: body.description.filter(|s| !s.trim().is_empty()),
+        start_now: body.start_now,
     };
 
     let job = state
@@ -137,6 +149,9 @@ pub async fn upload(
     let mut target_language: Option<String> = None;
     let mut provider: Option<String> = None;
     let mut model: Option<String> = None;
+    let mut movie_name: Option<String> = None;
+    let mut description: Option<String> = None;
+    let mut start_now: bool = false;
 
     while let Some(field) = multipart
         .next_field()
@@ -206,6 +221,29 @@ pub async fn upload(
                         .map_err(|e| ApiError::bad_request(format!("invalid field: {e}")))?,
                 );
             }
+            "movie_name" => {
+                movie_name = Some(
+                    field
+                        .text()
+                        .await
+                        .map_err(|e| ApiError::bad_request(format!("invalid field: {e}")))?,
+                );
+            }
+            "description" => {
+                description = Some(
+                    field
+                        .text()
+                        .await
+                        .map_err(|e| ApiError::bad_request(format!("invalid field: {e}")))?,
+                );
+            }
+            "start_now" => {
+                let text = field
+                    .text()
+                    .await
+                    .map_err(|e| ApiError::bad_request(format!("invalid field: {e}")))?;
+                start_now = matches!(text.trim(), "1" | "true" | "yes");
+            }
             _ => {}
         }
     }
@@ -267,6 +305,9 @@ pub async fn upload(
         provider,
         model,
         external_subtitle_path: Some(stored.clone()),
+        movie_name: movie_name.filter(|s| !s.trim().is_empty()),
+        description: description.filter(|s| !s.trim().is_empty()),
+        start_now,
     };
 
     match state.manager.create_job(&new).await {
@@ -347,6 +388,40 @@ pub async fn retry(
         .await
         .map_err(|e| ApiError::from_manager(&e))?;
     Ok(Json(serde_json::json!({ "job": job_json(&job) })))
+}
+
+/// `GET /api/jobs/:id/download` — download the job's output subtitle (core
+/// story step 7, §16 DoD). The stored absolute output path is mapped back to a
+/// guard-safe `(root, rel)` reference and served as an attachment.
+pub async fn download(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> Result<impl IntoResponse, ApiError> {
+    let job = state
+        .manager
+        .get(&id)
+        .await
+        .map_err(|e| ApiError::from_manager(&e))?;
+    let out = job
+        .output_path
+        .as_ref()
+        .ok_or_else(|| ApiError::bad_request("job has no output file yet"))?;
+    let path = out.as_path();
+    if !path.exists() {
+        return Err(ApiError::bad_request("output file is missing on disk"));
+    }
+    // Map the absolute output path back to a media root. The output always sits
+    // next to the source, which is inside a root; canonicalize so the prefix
+    // match against the (canonical) roots is reliable.
+    let canon = tokio::fs::canonicalize(path)
+        .await
+        .unwrap_or_else(|_| path.to_path_buf());
+    let Some((root, rel)) = state.guard.locate(&canon) else {
+        return Err(ApiError::bad_request(
+            "output file is not inside a media root",
+        ));
+    };
+    crate::routes::media::serve_file(&state, root, &rel).await
 }
 
 /// `GET /api/jobs/:id/events` (FR-16/17): per-job WebSocket stream.

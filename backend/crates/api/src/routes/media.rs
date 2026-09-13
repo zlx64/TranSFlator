@@ -9,6 +9,8 @@ use std::sync::Arc;
 use std::time::UNIX_EPOCH;
 
 use axum::extract::{Query, State};
+use axum::http::header;
+use axum::response::IntoResponse;
 use axum::Json;
 use serde::Deserialize;
 use transflator_media::cache::MediaCache;
@@ -18,6 +20,10 @@ use transflator_media::MediaError;
 
 use crate::error::ApiError;
 use crate::state::AppState;
+
+/// Cap on a single download (subtitles are tiny; this bounds memory for a
+/// bad-faith request of a large video).
+const FILE_MAX_BYTES: u64 = 100 * 1024 * 1024;
 
 #[derive(Debug, Deserialize)]
 pub struct StreamsQuery {
@@ -109,4 +115,67 @@ pub async fn streams(
         "selection": selection,
         "preferred": preferred,
     })))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct FileQuery {
+    /// Media root index (default 0).
+    #[serde(default)]
+    pub root: usize,
+    /// Path relative to the root, using `/` separators.
+    pub path: String,
+}
+
+/// Serve a path-guarded file as a download (`Content-Disposition: attachment`).
+/// Shared by the generic `GET /api/media/file` route and the per-job download
+/// shortcut. The path is re-resolved through the guard (defense in depth).
+pub async fn serve_file(
+    state: &AppState,
+    root: usize,
+    rel: &str,
+) -> Result<impl IntoResponse, ApiError> {
+    let resolved = state
+        .guard
+        .resolve(root, rel)
+        .map_err(|e| ApiError::from_media(&MediaError::from(e)))?;
+
+    let meta = tokio::fs::metadata(&resolved)
+        .await
+        .map_err(|e| ApiError::from_media(&MediaError::Io(e)))?;
+    if !meta.is_file() {
+        return Err(ApiError::from_media(&MediaError::NotFound(
+            display(&resolved),
+        )));
+    }
+    let size = meta.len();
+    if size > FILE_MAX_BYTES {
+        return Err(ApiError::bad_request(
+            "file is too large to download through the UI",
+        ));
+    }
+    let bytes = tokio::fs::read(&resolved)
+        .await
+        .map_err(|e| ApiError::from_media(&MediaError::Io(e)))?;
+
+    let name = resolved
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| "download".into());
+    let cd = format!("attachment; filename=\"{}\"", name.replace('"', ""));
+    Ok((
+        [
+            (header::CONTENT_DISPOSITION, cd),
+            (header::CONTENT_TYPE, "application/octet-stream".to_string()),
+            (header::CONTENT_LENGTH, size.to_string()),
+        ],
+        bytes,
+    ))
+}
+
+/// `GET /api/media/file?root=&path=` — download a path-guarded library file.
+pub async fn file(
+    State(state): State<Arc<AppState>>,
+    Query(q): Query<FileQuery>,
+) -> Result<impl IntoResponse, ApiError> {
+    serve_file(&state, q.root, &q.path).await
 }

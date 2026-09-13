@@ -43,6 +43,10 @@ struct JobRow {
     error_message: Option<String>,
     #[sqlx(default)]
     retry_mode: String,
+    #[sqlx(default)]
+    movie_name: Option<String>,
+    #[sqlx(default)]
+    description: Option<String>,
     created_at: String,
     updated_at: String,
 }
@@ -68,6 +72,8 @@ impl JobRow {
             log_tail: self.log_tail,
             error_message: self.error_message,
             retry_mode: self.retry_mode,
+            movie_name: self.movie_name,
+            description: self.description,
             created_at: self.created_at,
             updated_at: self.updated_at,
         })
@@ -92,8 +98,9 @@ impl JobStore {
             r#"INSERT INTO jobs (
                 id, source_path, subtitle_stream_index, source_language,
                 target_language, provider, model, status, progress_pct,
-                external_subtitle_path, log_tail, retry_mode, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, 'queued', 0, ?, '', 'rerun', ?, ?)"#,
+                external_subtitle_path, log_tail, retry_mode, movie_name, description,
+                created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, 'queued', 0, ?, '', 'rerun', ?, ?, ?, ?)"#,
         )
         .bind(&id)
         .bind(new.source_path.to_string_lossy().to_string())
@@ -103,6 +110,8 @@ impl JobStore {
         .bind(&new.provider)
         .bind(&new.model)
         .bind(new.external_subtitle_path.as_ref().map(|p| p.to_string_lossy().to_string()))
+        .bind(&new.movie_name)
+        .bind(&new.description)
         .bind(&now)
         .bind(&now)
         .execute(&self.pool)
@@ -275,6 +284,9 @@ mod tests {
             provider: "openai".into(),
             model: Some("gpt-4o-mini".into()),
             external_subtitle_path: None,
+            movie_name: None,
+            description: None,
+            start_now: false,
         }
     }
 
@@ -311,6 +323,24 @@ mod tests {
         // Normal jobs keep it None.
         let plain = store.create(&new_job()).await.unwrap();
         assert!(plain.external_subtitle_path.is_none());
+    }
+
+    #[tokio::test]
+    async fn context_fields_roundtrip() {
+        let store = JobStore::new(pool().await);
+        let mut new = new_job();
+        new.movie_name = Some("攻殻機動隊".into());
+        new.description = Some("A cyberpunk classic.".into());
+        let job = store.create(&new).await.unwrap();
+        assert_eq!(job.movie_name.as_deref(), Some("攻殻機動隊"));
+        assert_eq!(job.description.as_deref(), Some("A cyberpunk classic."));
+        let got = store.get(&job.id).await.unwrap();
+        assert_eq!(got.movie_name.as_deref(), Some("攻殻機動隊"));
+        assert_eq!(got.description.as_deref(), Some("A cyberpunk classic."));
+        // Omitted context stays None.
+        let plain = store.create(&new_job()).await.unwrap();
+        assert!(plain.movie_name.is_none());
+        assert!(plain.description.is_none());
     }
 
     #[tokio::test]

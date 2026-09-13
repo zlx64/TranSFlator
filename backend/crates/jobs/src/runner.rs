@@ -334,6 +334,9 @@ impl JobRunner for PipelineRunner {
             opts.api_key = api_key;
             opts.output = Some(output.clone());
             opts.project = true;
+            // Optional context (FR-10, §13): show name / description.
+            opts.movie_name = job.movie_name.clone();
+            opts.description = job.description.clone();
             // Retry mode mapping (FR-18).
             match job.retry_mode.as_str() {
                 "retranslate" => opts.retranslate = true,

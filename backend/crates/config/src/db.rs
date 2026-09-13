@@ -35,6 +35,8 @@ CREATE TABLE IF NOT EXISTS jobs (
     log_tail              TEXT,
     error_message         TEXT,
     retry_mode            TEXT NOT NULL DEFAULT 'rerun',
+    movie_name            TEXT,
+    description           TEXT,
     created_at            TEXT NOT NULL,
     updated_at            TEXT NOT NULL
 );
@@ -102,6 +104,20 @@ async fn migrate_columns(pool: &SqlitePool) -> anyhow::Result<()> {
         sqlx::query("ALTER TABLE jobs ADD COLUMN external_subtitle_path TEXT")
             .execute(pool)
             .await?;
+    }
+    // jobs.movie_name / jobs.description (FR-10 context fields, §13): optional
+    // show-name/description passed to llm-subtrans as --moviename/--description.
+    for col in ["movie_name", "description"] {
+        let (count,): (i64,) = sqlx::query_as(
+            "SELECT COUNT(*) FROM pragma_table_info('jobs') WHERE name = ?",
+        )
+        .bind(col)
+        .fetch_one(pool)
+        .await?;
+        if count == 0 {
+            let sql = format!("ALTER TABLE jobs ADD COLUMN {col} TEXT");
+            sqlx::query(&sql).execute(pool).await?;
+        }
     }
     Ok(())
 }

@@ -5,10 +5,11 @@ use crate::events::{JobEvent, JobEventEnvelope};
 use crate::model::{Job, JobStatus, NewJob};
 use crate::runner::{JobRunner, RunError};
 use crate::store::JobStore;
-use std::collections::HashMap;
+use std::cmp::Ordering;
+use std::collections::{BinaryHeap, HashMap};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tokio::sync::{broadcast, mpsc, Mutex, Semaphore};
+use tokio::sync::{broadcast, mpsc, Mutex, Notify, Semaphore};
 use tokio_util::sync::CancellationToken;
 use transflator_config::{AppConfig, Secrets, SettingsStore};
 use transflator_media::PathGuard;
@@ -30,6 +31,33 @@ pub enum ManagerError {
 
 pub type ManagerResult<T> = std::result::Result<T, ManagerError>;
 
+/// A queued job awaiting a free permit. Ordered so the queue worker pops the
+/// highest priority first; ties (same priority) resolve to the earliest
+/// submission (FIFO) via the sequence number.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Pending {
+    /// Higher = more urgent (1 = "start now", 0 = "add to queue").
+    prio: u32,
+    /// Monotonic submission counter (earlier = smaller).
+    seq: u64,
+    id: String,
+}
+
+impl PartialOrd for Pending {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for Pending {
+    fn cmp(&self, other: &Self) -> Ordering {
+        // Max-heap: higher priority first; within a priority, earlier seq first.
+        self.prio
+            .cmp(&other.prio)
+            .then_with(|| other.seq.cmp(&self.seq))
+    }
+}
+
 /// Owns the queue, the concurrency bound, cancellation tokens, and the event
 /// broadcast. The API layer holds an `Arc<JobManager>` in its state.
 pub struct JobManager {
@@ -38,12 +66,17 @@ pub struct JobManager {
     secrets: Secrets,
     #[allow(dead_code)]
     guard: PathGuard,
-    tx: mpsc::Sender<String>,
+    /// Queue of `(priority, job_id)`; higher priority jumps ahead (FR-14/§13).
+    tx: mpsc::Sender<(u32, String)>,
     /// Taken by [`JobManager::start`] (the receiver is not `Clone`).
-    rx: std::sync::Mutex<Option<mpsc::Receiver<String>>>,
+    rx: std::sync::Mutex<Option<mpsc::Receiver<(u32, String)>>>,
     events_tx: broadcast::Sender<JobEventEnvelope>,
     cancels: Arc<Mutex<HashMap<String, Arc<CancellationToken>>>>,
     sem: Arc<Semaphore>,
+    /// Wakes the queue worker when a running job frees a permit so the next
+    /// highest-priority pending job can be dispatched without waiting for a
+    /// new submission.
+    dispatch_notify: Arc<Notify>,
     runner: Arc<dyn JobRunner>,
     /// Set on graceful shutdown (NFR-6) to stop the queue worker from
     /// dispatching new work while in-flight jobs drain.
@@ -71,6 +104,7 @@ impl JobManager {
             events_tx,
             cancels: Arc::new(Mutex::new(HashMap::new())),
             sem: Arc::new(Semaphore::new(concurrency)),
+            dispatch_notify: Arc::new(Notify::new()),
             runner,
             shutdown: CancellationToken::new(),
         })
@@ -93,23 +127,33 @@ impl JobManager {
             }
             if let Ok(pending) = this.store.pending_queued().await {
                 for job in pending {
-                    let _ = this.submit(&job.id).await;
+                    // Re-queued jobs keep their original (normal) priority.
+                    let _ = this.submit(&job.id, 0).await;
                 }
             }
             let mut rx = rx;
+            let mut heap: BinaryHeap<Pending> = BinaryHeap::new();
+            let mut seq: u64 = 0;
             loop {
+                // Dispatch as many pending jobs as there are free permits,
+                // highest priority first (ties broken by submission order).
+                while let Ok(permit) = this.sem.clone().try_acquire_owned() {
+                    let Some(pending) = heap.pop() else { break };
+                    let this = Arc::clone(&this);
+                    tokio::spawn(async move {
+                        let permit = permit;
+                        this.run_one(pending.id).await;
+                        // Release the permit, then wake the worker so the next
+                        // pending job can start (the drop must precede the wake).
+                        drop(permit);
+                        this.dispatch_notify.notify_one();
+                    });
+                }
                 tokio::select! {
-                    maybe_id = rx.recv() => match maybe_id {
-                        Some(id) => {
-                            // Bound concurrency: wait for a permit before spawning.
-                            let Ok(permit) = this.sem.clone().acquire_owned().await else {
-                                continue;
-                            };
-                            let this = Arc::clone(&this);
-                            tokio::spawn(async move {
-                                let _permit = permit;
-                                this.run_one(id).await;
-                            });
+                    maybe = rx.recv() => match maybe {
+                        Some((prio, id)) => {
+                            seq += 1;
+                            heap.push(Pending { prio, seq, id });
                         }
                         None => break,
                     },
@@ -119,6 +163,8 @@ impl JobManager {
                         tracing::info!("queue worker stopping (shutdown)");
                         break;
                     }
+                    // A running job freed a permit; re-check the heap.
+                    _ = this.dispatch_notify.notified() => {}
                 }
             }
         });
@@ -162,9 +208,9 @@ impl JobManager {
         }
     }
 
-    async fn submit(&self, id: &str) -> Result<(), ManagerError> {
+    async fn submit(&self, id: &str, priority: u32) -> Result<(), ManagerError> {
         self.tx
-            .send(id.to_string())
+            .send((priority, id.to_string()))
             .await
             .map_err(|_| ManagerError::QueueFull)
     }
@@ -197,7 +243,9 @@ impl JobManager {
             return Err(ManagerError::MissingApiKey(provider.as_str().to_string()));
         }
         let job = self.store.create(new).await?;
-        self.submit(&job.id).await?;
+        // "Start now" jumps ahead of normal (add-to-queue) jobs (FR-14/§13).
+        let priority = if new.start_now { 1 } else { 0 };
+        self.submit(&job.id, priority).await?;
         Ok(job)
     }
 
@@ -249,7 +297,7 @@ impl JobManager {
             .map_err(|e| ManagerError::Invalid(e.to_string()))?;
         self.store.prepare_retry(id, mode.as_str()).await?;
         let job = self.store.get(id).await?;
-        self.submit(id).await?;
+        self.submit(id, 0).await?;
         Ok(job)
     }
 
@@ -394,6 +442,9 @@ mod tests {
             provider: "custom".into(),
             model: None,
             external_subtitle_path: None,
+            movie_name: None,
+            description: None,
+            start_now: false,
         }
     }
 
@@ -567,6 +618,89 @@ mod tests {
             gauge.max.load(Ordering::SeqCst)
         );
         assert_eq!(gauge.max.load(Ordering::SeqCst), 2, "should have used the full bound");
+    }
+
+    /// Runner that records the order in which jobs actually start.
+    struct OrderRec {
+        order: tokio::sync::Mutex<Vec<String>>,
+    }
+    struct OrderRunner {
+        rec: Arc<OrderRec>,
+        delay: Duration,
+    }
+    impl JobRunner for OrderRunner {
+        fn run<'a>(
+            &'a self,
+            job: &'a Job,
+            cancel: &'a CancellationToken,
+            _events: &'a broadcast::Sender<JobEventEnvelope>,
+        ) -> BoxFuture<'a, Result<String, RunError>> {
+            let rec = Arc::clone(&self.rec);
+            let delay = self.delay;
+            let hang = job.source_path.ends_with("A.mkv");
+            Box::pin(async move {
+                rec.order.lock().await.push(job.id.clone());
+                if hang {
+                    cancel.cancelled().await;
+                    return Err(RunError::Canceled);
+                }
+                tokio::select! {
+                    _ = tokio::time::sleep(delay) => {}
+                    _ = cancel.cancelled() => return Err(RunError::Canceled),
+                }
+                Ok(format!("order-{}.srt", job.id))
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn start_now_jumps_ahead_of_queued() {
+        let rec = Arc::new(OrderRec {
+            order: tokio::sync::Mutex::new(Vec::new()),
+        });
+        let runner = Arc::new(OrderRunner {
+            rec: Arc::clone(&rec),
+            delay: Duration::from_millis(50),
+        });
+        let env = env(1, runner).await;
+        // A: normal; runs first (only permit) and holds it until canceled.
+        let a = env
+            .manager
+            .create_job(&new_job("C:\\media\\A.mkv"))
+            .await
+            .unwrap();
+        wait_status(&env.store, &a.id, JobStatus::Running, Duration::from_secs(5)).await;
+        // B: normal, queued behind the running A.
+        let b = env
+            .manager
+            .create_job(&new_job("C:\\media\\B.mkv"))
+            .await
+            .unwrap();
+        // C: start-now — must jump ahead of B once a permit frees.
+        let mut c = new_job("C:\\media\\C.mkv");
+        c.start_now = true;
+        let c = env.manager.create_job(&c).await.unwrap();
+        // Let B and C settle into the queue before freeing the permit.
+        tokio::time::sleep(Duration::from_millis(80)).await;
+        env.manager.cancel_job(&a.id).await.unwrap();
+        // Wait for B and C to finish.
+        let start = Instant::now();
+        loop {
+            let b_done = env.store.get(&b.id).await.unwrap().status.is_terminal();
+            let c_done = env.store.get(&c.id).await.unwrap().status.is_terminal();
+            if b_done && c_done {
+                break;
+            }
+            assert!(start.elapsed() < Duration::from_secs(5));
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        let order = rec.order.lock().await.clone();
+        let pos_b = order.iter().position(|id| id == &b.id).unwrap();
+        let pos_c = order.iter().position(|id| id == &c.id).unwrap();
+        assert!(
+            pos_c < pos_b,
+            "start-now job should run before the queued job; order: {order:?}"
+        );
     }
 
     #[tokio::test]

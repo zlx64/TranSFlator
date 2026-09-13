@@ -207,7 +207,7 @@ describe("Media page — FR-7 subtitle selection branching", () => {
       await screen.findByText("No subtitle tracks found"),
     ).toBeInTheDocument();
     const uploadBtn = screen.getByRole("button", {
-      name: /upload & translate/i,
+      name: /upload & start now/i,
     });
     expect(uploadBtn).toBeDisabled();
 
@@ -300,5 +300,44 @@ describe("Media page — FR-7 subtitle selection branching", () => {
     expect(
       screen.getByRole("option", { name: /auto \(default\)/i }),
     ).toBeInTheDocument();
+  });
+
+  it("sends optional context fields and the start-now flag (§13)", async () => {
+    (api.get as ReturnType<typeof vi.fn>).mockResolvedValue(
+      response({ auto: { stream_index: 1 } }, 1, [video, subVtt]),
+    );
+    renderMedia();
+
+    await screen.findByText("Subtitle track auto-selected");
+    await userEvent.click(
+      screen.getByRole("button", { name: "Translate" }),
+    );
+
+    await userEvent.type(
+      await screen.findByLabelText("Show name (optional)"),
+      "Test Show",
+    );
+    await userEvent.type(
+      screen.getByLabelText("Additional information (optional)"),
+      "A test description",
+    );
+    await userEvent.click(
+      screen.getByRole("checkbox", { name: /start now/i }),
+    );
+    await userEvent.click(
+      screen.getByRole("button", { name: /add to queue/i }),
+    );
+
+    await waitFor(() =>
+      expect(api.createJob).toHaveBeenCalledWith(
+        expect.objectContaining({
+          path: "Show/Season 1/E01.mkv",
+          provider: "openai",
+          movie_name: "Test Show",
+          description: "A test description",
+          start_now: false,
+        }),
+      ),
+    );
   });
 });

@@ -77,6 +77,25 @@ impl PathGuard {
         }
         Ok(canon)
     }
+
+    /// The inverse of [`resolve`]: find the media root that contains `abs` and
+    /// return `(root_index, rel_path)` with `/` separators. Used to turn a
+    /// stored absolute output path back into a guard-safe download reference.
+    /// The most specific (longest) matching root wins.
+    pub fn locate(&self, abs: &Path) -> Option<(usize, String)> {
+        let mut best: Option<(usize, usize, &PathBuf)> = None;
+        for (i, root) in self.roots.iter().enumerate() {
+            if abs.starts_with(root) {
+                let depth = root.components().count();
+                if best.map(|(_, d, _)| depth > d).unwrap_or(true) {
+                    best = Some((i, depth, root));
+                }
+            }
+        }
+        let (i, _, root) = best?;
+        let rel = abs.strip_prefix(root).ok()?;
+        Some((i, rel.to_string_lossy().replace('\\', "/")))
+    }
 }
 
 /// Canonicalize `path`, tolerating a non-existent final component (e.g. a not-yet-
@@ -151,6 +170,23 @@ mod tests {
         let p = guard.resolve(0, "show/season1/ep1.mkv").unwrap();
         assert!(p.ends_with("show/season1/ep1.mkv"));
         assert!(p.starts_with(&guard.roots()[0]));
+    }
+
+    #[test]
+    fn locate_maps_absolute_path_back_to_root_and_rel() {
+        let dir = make_root();
+        let guard = PathGuard::new(&[dir.path().to_path_buf()]).unwrap();
+        let abs = guard.resolve(0, "show/season1/ep1.mkv").unwrap();
+        let (idx, rel) = guard.locate(&abs).unwrap();
+        assert_eq!(idx, 0);
+        assert_eq!(rel, "show/season1/ep1.mkv");
+    }
+
+    #[test]
+    fn locate_rejects_path_outside_roots() {
+        let dir = make_root();
+        let guard = PathGuard::new(&[dir.path().to_path_buf()]).unwrap();
+        assert!(guard.locate(Path::new("/etc/passwd")).is_none());
     }
 
     #[test]

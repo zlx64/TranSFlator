@@ -8,6 +8,7 @@ import {
   Trash2,
 } from "lucide-react";
 import { api, type UpdateSettingsBody } from "@/lib/api";
+import { LangField } from "./Media";
 
 type Overwrite = "overwrite" | "suffix" | "skip";
 
@@ -175,14 +176,11 @@ export default function Settings() {
         <section className="rounded-xl border border-border bg-surface p-5">
           <h2 className="mb-4 text-sm font-semibold">Translation defaults</h2>
           <div className="grid gap-4 sm:grid-cols-2">
-            <label className="flex flex-col gap-1 text-sm">
-              <span className="text-muted">Default target language</span>
-              <input
-                value={targetLang}
-                onChange={(e) => setTargetLang(e.target.value)}
-                className={inputCls}
-              />
-            </label>
+            <LangField
+              value={targetLang}
+              onChange={setTargetLang}
+              label="Default target language"
+            />
             <label className="flex flex-col gap-1 text-sm">
               <span className="text-muted">Concurrency (max jobs)</span>
               <input

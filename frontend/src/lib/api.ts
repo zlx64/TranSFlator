@@ -64,6 +64,38 @@ async function request<T>(
   return (await res.json()) as T;
 }
 
+export async function downloadJob(id: string, filename: string): Promise<void> {
+  const token = getToken();
+  const res = await fetch(`/api/jobs/${id}/download`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+  if (!res.ok) {
+    let message = `${res.status} ${res.statusText}`;
+    try {
+      const data = await res.json();
+      if (
+        data &&
+        typeof data === "object" &&
+        typeof (data as Record<string, unknown>).error === "string"
+      ) {
+        message = (data as { error: string }).error;
+      }
+    } catch {
+      // non-JSON error body; keep the default message
+    }
+    throw new ApiError(res.status, message);
+  }
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
 export const api = {
   get: <T>(
     path: string,
@@ -97,6 +129,7 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ mode }),
     }),
+  downloadJob,
   /** §6.1: translate an uploaded external .srt/.ass/.vtt instead of an
    *  extracted stream. `path` is the video the output should sit next to. */
   uploadSubtitleJob: (file: File, body: UploadJobBody) => {
@@ -107,6 +140,9 @@ export const api = {
     form.append("provider", body.provider);
     if (body.target_language) form.append("target_language", body.target_language);
     if (body.model) form.append("model", body.model);
+    if (body.movie_name) form.append("movie_name", body.movie_name);
+    if (body.description) form.append("description", body.description);
+    if (body.start_now) form.append("start_now", "true");
     return request<{ job: Job }>("/api/jobs/upload", {
       method: "POST",
       body: form,
@@ -280,6 +316,11 @@ export interface LibraryEntry {
   is_dir: boolean;
   size?: number;
   is_video: boolean;
+  /** Cached ffprobe metadata, present only when the file has been probed. */
+  duration_s?: number | null;
+  container?: string | null;
+  audio_count?: number | null;
+  subtitle_count?: number | null;
 }
 
 export interface LibraryTreeResponse {
@@ -353,6 +394,8 @@ export interface Job {
   target_language: string;
   provider: string;
   model: string | null;
+  movie_name?: string | null;
+  description?: string | null;
   status: JobStatus;
   progress_pct: number;
   output_path: string | null;
@@ -377,6 +420,12 @@ export interface CreateJobBody {
   target_language?: string;
   provider: string;
   model?: string;
+  /** Optional show-name context passed to llm-subtrans (`--moviename`). */
+  movie_name?: string;
+  /** Optional description context passed to llm-subtrans (`--description`). */
+  description?: string;
+  /** Jump ahead of normal queued jobs (§13). */
+  start_now?: boolean;
 }
 
 export interface UploadJobBody {
@@ -386,6 +435,9 @@ export interface UploadJobBody {
   provider: string;
   target_language?: string;
   model?: string;
+  movie_name?: string;
+  description?: string;
+  start_now?: boolean;
 }
 
 /** Mirrors the backend `JobEvent` (tagged `type`, snake_case). */
