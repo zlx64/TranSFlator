@@ -1,0 +1,70 @@
+# TranSFlator — single-service compose.
+#
+# Quick start:
+#   1. Put your media library somewhere (or create ./media).
+#   2. cp .env.example .env   (then edit APP_SECRET + provider keys)
+#   3. docker compose up -d --build
+#   4. Open http://localhost:8080
+#
+# The build context is the repo root (see `build.context`), and the Dockerfile
+# lives in docker/.
+
+services:
+  transflator:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+      args:
+        LLM_SUBTRANS_VERSION: ${LLM_SUBTRANS_VERSION:-1.6.1}
+    image: transflator:local
+    container_name: transflator
+    ports:
+      - "${PORT:-8080}:8080"
+    environment:
+      # --- Media library (mounted read-only below) ---
+      MEDIA_ROOTS: /media
+      # --- Storage (writable volume below) ---
+      DATA_DIR: /data
+      DB_PATH: /data/transflator.db
+      # --- Security ---
+      # Strong random value, e.g. `openssl rand -hex 32`. If left empty the app
+      # falls back to an insecure dev default and logs a warning.
+      APP_SECRET: ${APP_SECRET:-}
+      # Optional shared access token. Empty = open access (dev).
+      AUTH_TOKEN: ${AUTH_TOKEN:-}
+      # --- Server ---
+      HOST: 0.0.0.0
+      PORT: "8080"
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      # --- Translation ---
+      LLM_SUBTRANS_HOME: /opt/llm-subtrans
+      PYTHON_BIN: python3
+      FFMPEG_BIN: ffmpeg
+      FFPROBE_BIN: ffprobe
+      CONCURRENCY: ${CONCURRENCY:-1}
+      OUTPUT_PATTERN: "${OUTPUT_PATTERN:-{name}.{lang}.srt}"
+      OVERWRITE_BEHAVIOR: ${OVERWRITE_BEHAVIOR:-suffix}
+      DEFAULT_TARGET_LANGUAGE: ${DEFAULT_TARGET_LANGUAGE:-English}
+      # Provider API keys are normally set in the Settings UI (stored
+      # encrypted). You can also pre-seed any of these via the environment:
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+      MISTRAL_API_KEY: ${MISTRAL_API_KEY:-}
+    volumes:
+      # Your media library, read-only. Point MEDIA_ROOT_HOST at it.
+      - ${MEDIA_ROOT_HOST:-./media}:/media:ro
+      # Persistent data: SQLite DB + translated subtitle output.
+      - transflator-data:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8080/api/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+volumes:
+  transflator-data:

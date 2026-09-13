@@ -1,0 +1,25 @@
+[package]
+name = "transflator-config"
+description = "Configuration, secrets, and database setup for TranSFlator"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+sqlx.workspace = true
+chrono.workspace = true
+thiserror.workspace = true
+anyhow.workspace = true
+tracing.workspace = true
+aes-gcm.workspace = true
+sha2.workspace = true
+base64.workspace = true
+rand.workspace = true
+once_cell.workspace = true
+walkdir.workspace = true
+
+[dev-dependencies]
+tempfile = "3"
+tokio.workspace = true

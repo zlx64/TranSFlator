@@ -1,0 +1,25 @@
+[package]
+name = "transflator-jobs"
+description = "Job state machine, SQLite persistence, and bounded-concurrency queue"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+sqlx.workspace = true
+chrono.workspace = true
+uuid.workspace = true
+thiserror.workspace = true
+anyhow.workspace = true
+tracing.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
+futures-util.workspace = true
+transflator-config.workspace = true
+transflator-media.workspace = true
+transflator-translate.workspace = true
+
+[dev-dependencies]
+tempfile = "3"

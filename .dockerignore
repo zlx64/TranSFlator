@@ -1,0 +1,23 @@
+# VCS
+.git
+.gitignore
+
+# Rust build artifacts — the image compiles its own (this is the big one:
+# a local `target/` can be several GB and must never enter the build context).
+backend/target
+
+# Frontend deps + build output — the image installs/builds its own.
+frontend/node_modules
+frontend/dist
+
+# Environment / secrets — never bake into the image.
+.env
+.env.*
+
+# Docs / plan (not needed in the image).
+*.md
+
+# Local editor / OS noise.
+.DS_Store
+Thumbs.db
+*-nostdin*

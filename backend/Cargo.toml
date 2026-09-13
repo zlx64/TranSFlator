@@ -1,0 +1,75 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/config",
+    "crates/media",
+    "crates/translate",
+    "crates/jobs",
+    "crates/api",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+authors = ["TranSFlator"]
+repository = "https://github.com/zlx64/TranSFlator"
+
+[workspace.dependencies]
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+tokio-util = { version = "0.7", features = ["rt"] }
+futures-util = "0.3"
+bytes = "1"
+
+# Web
+axum = { version = "0.7", features = ["ws", "multipart"] }
+tower = "0.5"
+tower-http = { version = "0.6", features = ["cors", "trace", "compression-gzip", "fs"] }
+mime_guess = "2"
+
+# HTTP client (provider model discovery)
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "http2"] }
+
+# Data / serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio-rustls", "sqlite", "chrono", "uuid", "derive"] }
+chrono = { version = "0.4", features = ["serde"] }
+uuid = { version = "1", features = ["v4", "serde"] }
+
+# Error handling
+thiserror = "2"
+anyhow = "1"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+
+# Crypto / secrets
+aes-gcm = "0.10"
+sha2 = "0.10"
+base64 = "0.22"
+rand = "0.8"
+
+# Text / encoding
+encoding_rs = "0.8"
+chardetng = "0.1"
+regex = "1"
+
+# FS / process
+fs2 = "0.4"
+walkdir = "2"
+once_cell = "1"
+
+# Internal crates
+transflator-config = { path = "crates/config" }
+transflator-media = { path = "crates/media" }
+transflator-translate = { path = "crates/translate" }
+transflator-jobs = { path = "crates/jobs" }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = "symbols"
+panic = "abort"
