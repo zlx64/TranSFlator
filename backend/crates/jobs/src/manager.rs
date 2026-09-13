@@ -32,6 +32,15 @@ pub enum ManagerError {
 
 pub type ManagerResult<T> = std::result::Result<T, ManagerError>;
 
+/// Bulk delete scope for job history.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DeleteFilter {
+    All,
+    Failed,
+    Done,
+    Interrupted,
+}
+
 /// A queued job awaiting a free permit. Ordered so the queue worker pops the
 /// highest priority first; ties (same priority) resolve to the earliest
 /// submission (FIFO) via the sequence number.
@@ -127,6 +136,9 @@ impl JobManager {
                 }
             }
             if let Ok(pending) = this.store.pending_queued().await {
+                if !pending.is_empty() {
+                    tracing::info!(count = pending.len(), "re-queued pending jobs");
+                }
                 for job in pending {
                     // Re-queued jobs keep their original (normal) priority.
                     let _ = this.submit(&job.id, 0).await;
@@ -261,6 +273,14 @@ impl JobManager {
         // "Start now" jumps ahead of normal (add-to-queue) jobs (FR-14/§13).
         let priority = if new.start_now { 1 } else { 0 };
         self.submit(&job.id, priority).await?;
+        tracing::info!(
+            job = %job.id,
+            provider = %job.provider,
+            target = %job.target_language,
+            source = %job.source_path.display(),
+            start_now = new.start_now,
+            "job created"
+        );
         Ok(job)
     }
 
@@ -294,6 +314,7 @@ impl JobManager {
                 )))
             }
         }
+        tracing::info!(job = %id, status = %job.status, "cancel requested");
         Ok(())
     }
 
@@ -313,6 +334,7 @@ impl JobManager {
         self.store.prepare_retry(id, mode.as_str()).await?;
         let job = self.store.get(id).await?;
         self.submit(id, 0).await?;
+        tracing::info!(job = %id, mode = %mode.as_str(), "job retry requested");
         Ok(job)
     }
 
@@ -322,6 +344,62 @@ impl JobManager {
 
     pub async fn list(&self, limit: i64) -> ManagerResult<Vec<Job>> {
         Ok(self.store.list(limit).await?)
+    }
+
+    /// Delete one job from history. If the job is still running, its
+    /// cancellation token is triggered immediately before the row is removed.
+    pub async fn delete_job(&self, id: &str) -> ManagerResult<()> {
+        let job = self.store.get(id).await?;
+        let was_running = job.status == JobStatus::Running;
+        if was_running {
+            self.request_cancel(id).await;
+        }
+        self.store.delete(id).await?;
+        tracing::info!(
+            job = %id,
+            status = %job.status,
+            canceled = was_running,
+            "job deleted"
+        );
+        Ok(())
+    }
+
+    /// Delete a group of jobs from history. Running jobs in the selected group
+    /// are canceled immediately before their rows are removed.
+    pub async fn delete_jobs(&self, filter: DeleteFilter) -> ManagerResult<usize> {
+        let jobs = match filter {
+            DeleteFilter::All => self.store.list(i64::MAX).await?,
+            DeleteFilter::Failed => {
+                self.store.list_by_status(&[JobStatus::Failed]).await?
+            }
+            DeleteFilter::Done => {
+                self.store.list_by_status(&[JobStatus::Done]).await?
+            }
+            DeleteFilter::Interrupted => {
+                self.store.list_by_status(&[JobStatus::Interrupted]).await?
+            }
+        };
+        for job in &jobs {
+            if job.status == JobStatus::Running {
+                self.request_cancel(&job.id).await;
+            }
+        }
+        let deleted = match filter {
+            DeleteFilter::All => self.store.delete_all().await?,
+            DeleteFilter::Failed => self.store.delete_by_status(&[JobStatus::Failed]).await?,
+            DeleteFilter::Done => self.store.delete_by_status(&[JobStatus::Done]).await?,
+            DeleteFilter::Interrupted => {
+                self.store.delete_by_status(&[JobStatus::Interrupted]).await?
+            }
+        };
+        tracing::info!(filter = ?filter, deleted, "jobs deleted");
+        Ok(deleted as usize)
+    }
+
+    async fn request_cancel(&self, id: &str) {
+        if let Some(token) = self.cancels.lock().await.get(id).cloned() {
+            token.cancel();
+        }
     }
 
     async fn run_one(&self, id: String) {
@@ -361,6 +439,13 @@ impl JobManager {
                 status: JobStatus::Running.as_str().into(),
             },
         ));
+        tracing::info!(
+            job = %id,
+            provider = %job.provider,
+            target = %job.target_language,
+            model = ?job.model,
+            "job started"
+        );
 
         let result = self.runner.run(&job, &cancel, &self.events_tx).await;
         match result {
@@ -933,5 +1018,153 @@ mod tests {
                 wait_status(&env.store, &job.id, JobStatus::Canceled, Duration::from_secs(5)).await;
             assert_eq!(canceled.status, JobStatus::Canceled);
         }
+    }
+
+    #[tokio::test]
+    async fn delete_queued_job_removes_row() {
+        let env = env(
+            1,
+            Arc::new(FakeRunner {
+                delay: Duration::from_millis(1),
+                fail: false,
+                hang: true,
+            }),
+        )
+        .await;
+        let a = env
+            .manager
+            .create_job(&new_job("C:\\media\\A.mkv"))
+            .await
+            .unwrap();
+        wait_status(&env.store, &a.id, JobStatus::Running, Duration::from_secs(5)).await;
+        let b = env
+            .manager
+            .create_job(&new_job("C:\\media\\B.mkv"))
+            .await
+            .unwrap();
+        wait_status(&env.store, &b.id, JobStatus::Queued, Duration::from_millis(500))
+            .await;
+
+        env.manager.delete_job(&b.id).await.unwrap();
+        assert!(matches!(
+            env.store.get(&b.id).await,
+            Err(crate::store::StoreError::NotFound(_))
+        ));
+
+        let _ = env.manager.cancel_job(&a.id).await;
+    }
+
+    #[tokio::test]
+    async fn delete_running_job_cancels_and_removes_row() {
+        let env = env(
+            2,
+            Arc::new(FakeRunner {
+                delay: Duration::from_millis(1),
+                fail: false,
+                hang: true,
+            }),
+        )
+        .await;
+        let job = env
+            .manager
+            .create_job(&new_job("C:\\media\\E01.mkv"))
+            .await
+            .unwrap();
+        wait_status(&env.store, &job.id, JobStatus::Running, Duration::from_secs(5)).await;
+
+        env.manager.delete_job(&job.id).await.unwrap();
+        assert!(matches!(
+            env.store.get(&job.id).await,
+            Err(crate::store::StoreError::NotFound(_))
+        ));
+
+        // Give the canceled runner a moment to observe the token and exit.
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+
+    #[tokio::test]
+    async fn delete_jobs_all_cancels_active_and_removes_every_row() {
+        let env = env(
+            2,
+            Arc::new(FakeRunner {
+                delay: Duration::from_millis(1),
+                fail: false,
+                hang: true,
+            }),
+        )
+        .await;
+        let a = env
+            .manager
+            .create_job(&new_job("C:\\media\\A.mkv"))
+            .await
+            .unwrap();
+        let b = env
+            .manager
+            .create_job(&new_job("C:\\media\\B.mkv"))
+            .await
+            .unwrap();
+        let c = env
+            .manager
+            .create_job(&new_job("C:\\media\\C.mkv"))
+            .await
+            .unwrap();
+
+        // Wait until A and B are running and C is queued.
+        let start = Instant::now();
+        loop {
+            let a_status = env.store.get(&a.id).await.unwrap().status;
+            let b_status = env.store.get(&b.id).await.unwrap().status;
+            let c_status = env.store.get(&c.id).await.unwrap().status;
+            if a_status == JobStatus::Running
+                && b_status == JobStatus::Running
+                && c_status == JobStatus::Queued
+            {
+                break;
+            }
+            assert!(start.elapsed() < Duration::from_secs(5));
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+
+        let deleted = env.manager.delete_jobs(DeleteFilter::All).await.unwrap();
+        assert_eq!(deleted, 3);
+        assert!(env.store.list(100).await.unwrap().is_empty());
+
+        // Give the canceled runners a moment to observe the tokens and exit.
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+
+    #[tokio::test]
+    async fn delete_jobs_failed_only_removes_failed_rows() {
+        let env = env(2, Arc::new(FakeRunner::new())).await;
+        let done = env.store.create(&new_job("C:\\media\\done.mkv")).await.unwrap();
+        let failed = env.store.create(&new_job("C:\\media\\failed.mkv")).await.unwrap();
+        env.store
+            .set_status(&done.id, JobStatus::Running)
+            .await
+            .unwrap();
+        env.store
+            .set_status(&done.id, JobStatus::Done)
+            .await
+            .unwrap();
+        env.store
+            .set_status(&failed.id, JobStatus::Running)
+            .await
+            .unwrap();
+        env.store
+            .set_status(&failed.id, JobStatus::Failed)
+            .await
+            .unwrap();
+
+        let deleted = env
+            .manager
+            .delete_jobs(DeleteFilter::Failed)
+            .await
+            .unwrap();
+        assert_eq!(deleted, 1);
+        assert!(matches!(
+            env.store.get(&failed.id).await,
+            Err(crate::store::StoreError::NotFound(_))
+        ));
+        assert!(env.store.get(&done.id).await.is_ok());
     }
 }

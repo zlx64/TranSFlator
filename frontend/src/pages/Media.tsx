@@ -5,6 +5,7 @@ import {
   AlertTriangle,
   ArrowLeft,
   CheckCircle2,
+  FileVideo,
   Languages,
   RefreshCw,
   Send,
@@ -246,14 +247,17 @@ export default function Media() {
       {info && selection && (
         <>
           {/* File meta */}
-          <div className="mb-4 flex flex-wrap gap-x-6 gap-y-1 rounded-xl border border-border bg-surface px-4 py-3 text-sm">
-            <Meta label="Duration" value={formatDuration(info.duration_s)} />
-            <Meta label="Container" value={info.container ?? "—"} />
-            <Meta label="Size" value={formatSize(info.size)} />
-            <Meta
-              label="Streams"
-              value={`${info.streams.length} (${info.video_count} video, ${info.audio_count} audio, ${info.subtitle_count} sub)`}
-            />
+          <div className="mb-4 flex flex-wrap items-center gap-4 rounded-xl border border-border bg-surface px-4 py-3 text-sm">
+            <MediaThumb url={data?.thumbnail_url} />
+            <div className="flex flex-wrap gap-x-6 gap-y-1">
+              <Meta label="Duration" value={formatDuration(info.duration_s)} />
+              <Meta label="Container" value={info.container ?? "—"} />
+              <Meta label="Size" value={formatSize(info.size)} />
+              <Meta
+                label="Streams"
+                value={`${info.streams.length} (${info.video_count} video, ${info.audio_count} audio, ${info.subtitle_count} sub)`}
+              />
+            </div>
           </div>
 
           {/* Subtitle selection (FR-7) */}
@@ -649,6 +653,26 @@ function Meta({ label, value }: { label: string; value: string }) {
     <span className="text-muted">
       {label} <span className="text-foreground">{value}</span>
     </span>
+  );
+}
+
+function MediaThumb({ url }: { url?: string | null }) {
+  const [failed, setFailed] = useState(false);
+  if (!url || failed) {
+    return (
+      <div className="flex h-24 w-40 shrink-0 items-center justify-center rounded-lg bg-surface-2 ring-1 ring-border">
+        <FileVideo size={24} className="text-muted" />
+      </div>
+    );
+  }
+  return (
+    <img
+      src={url}
+      alt=""
+      loading="lazy"
+      onError={() => setFailed(true)}
+      className="h-24 w-40 shrink-0 rounded-lg object-cover ring-1 ring-border"
+    />
   );
 }
 

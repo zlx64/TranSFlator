@@ -4,6 +4,7 @@
 use crate::model::MediaError;
 use crate::path_guard::PathGuard;
 use serde::Serialize;
+use sha2::{Digest, Sha256};
 use std::path::Path;
 
 /// Container extensions treated as video files (FR-4). MKV is the priority case.
@@ -48,6 +49,10 @@ pub struct Entry {
     pub audio_count: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub subtitle_count: Option<u32>,
+    /// Unique, cacheable thumbnail URL (present for video files that could be
+    /// stat'ed). The query signature changes when the file changes.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub thumbnail_url: Option<String>,
 }
 
 /// Result of listing a directory.
@@ -132,6 +137,7 @@ pub fn list_dir(
                 container: None,
                 audio_count: None,
                 subtitle_count: None,
+                thumbnail_url: None,
             });
         } else if file_type.is_file() {
             let video = is_video(&name);
@@ -147,6 +153,7 @@ pub fn list_dir(
                     container: None,
                     audio_count: None,
                     subtitle_count: None,
+                    thumbnail_url: None,
                 });
             }
         }
@@ -199,6 +206,7 @@ pub fn search(
             container: None,
             audio_count: None,
             subtitle_count: None,
+            thumbnail_url: None,
         });
     }
 
@@ -213,6 +221,58 @@ fn join_rel(parent: &str, name: &str) -> String {
     } else {
         format!("{}/{}", parent.trim_end_matches('/'), name)
     }
+}
+
+/// Stable signature for a file's current content metadata. Used to make
+/// thumbnail URLs unique so browsers can cache them safely; the URL changes
+/// when the file's size or mtime changes.
+pub fn thumbnail_signature(root: usize, rel_path: &str, size: u64, mtime: i64) -> String {
+    let mut h = Sha256::new();
+    h.update(root.to_le_bytes());
+    h.update(b"|");
+    h.update(rel_path.as_bytes());
+    h.update(b"|");
+    h.update(size.to_le_bytes());
+    h.update(b"|");
+    h.update(mtime.to_le_bytes());
+    let digest = h.finalize();
+    let mut out = String::with_capacity(32);
+    for byte in digest.iter().take(16) {
+        out.push_str(&format!("{byte:02x}"));
+    }
+    out
+}
+
+/// Percent-encode a string for use as a single `application/x-www-form-urlencoded`
+/// query parameter value.
+pub fn percent_encode_query(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for b in s.bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(b as char)
+            }
+            _ => out.push_str(&format!("%{b:02X}")),
+        }
+    }
+    out
+}
+
+/// Build a unique, cacheable thumbnail URL for a library entry.
+pub fn thumbnail_url(
+    root: usize,
+    rel_path: &str,
+    size: u64,
+    mtime: i64,
+    width: u32,
+    height: u32,
+    at_secs: u64,
+) -> String {
+    let sig = thumbnail_signature(root, rel_path, size, mtime);
+    format!(
+        "/api/media/thumbnail?root={root}&path={}&width={width}&height={height}&at={at_secs}&sig={sig}",
+        percent_encode_query(rel_path)
+    )
 }
 
 #[cfg(test)]
@@ -294,5 +354,36 @@ mod tests {
             display_path(Path::new(r"\\?\UNC\server\share")),
             "//server/share"
         );
+    }
+
+    #[test]
+    fn percent_encode_query_encodes_reserved_and_utf8() {
+        assert_eq!(percent_encode_query("a/b c&d"), "a%2Fb%20c%26d");
+        assert_eq!(percent_encode_query("ok-_.~"), "ok-_.~");
+        assert_eq!(percent_encode_query("日本語"), "%E6%97%A5%E6%9C%AC%E8%AA%9E");
+    }
+
+    #[test]
+    fn thumbnail_signature_is_stable_and_sensitive() {
+        let a = thumbnail_signature(0, "Show/E01.mkv", 123, 1000);
+        let b = thumbnail_signature(0, "Show/E01.mkv", 123, 1000);
+        let c = thumbnail_signature(0, "Show/E01.mkv", 124, 1000);
+        let d = thumbnail_signature(0, "Show/E01.mkv", 123, 1001);
+        let e = thumbnail_signature(1, "Show/E01.mkv", 123, 1000);
+        assert_eq!(a, b);
+        assert_ne!(a, c);
+        assert_ne!(a, d);
+        assert_ne!(a, e);
+        assert_eq!(a.len(), 32);
+    }
+
+    #[test]
+    fn thumbnail_url_is_unique_and_encoded() {
+        let url = thumbnail_url(0, "Show/Season 1/E01 & bonus.mkv", 123, 1000, 160, 90, 1);
+        assert!(url.starts_with("/api/media/thumbnail?root=0&path=Show%2FSeason%201%2FE01%20%26%20bonus.mkv"));
+        assert!(url.contains("width=160"));
+        assert!(url.contains("height=90"));
+        assert!(url.contains("at=1"));
+        assert!(url.contains("sig="));
     }
 }

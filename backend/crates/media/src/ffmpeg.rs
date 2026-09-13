@@ -24,6 +24,89 @@ impl Ffmpeg {
         }
     }
 
+    /// Generate a single JPEG thumbnail frame at `at_secs` into `output`.
+    ///
+    /// The frame is scaled and padded to exactly `width` x `height` so UI grids
+    /// can use a fixed-size image.
+    pub async fn thumbnail(
+        &self,
+        input: &Path,
+        output: &Path,
+        width: u32,
+        height: u32,
+        at_secs: u64,
+    ) -> Result<PathBuf, MediaError> {
+        if let Some(parent) = output.parent() {
+            if !parent.as_os_str().is_empty() {
+                std::fs::create_dir_all(parent)?;
+            }
+        }
+        let _ = std::fs::remove_file(output);
+
+        let vf = format!(
+            "scale={width}:{height}:force_original_aspect_ratio=decrease,pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1"
+        );
+        let at = at_secs.to_string();
+        let mut cmd = Command::new(&self.bin);
+        cmd.args([
+            "-nostdin",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-y",
+            "-ss",
+            at.as_str(),
+            "-i",
+            input.to_str().ok_or_else(|| MediaError::Ffmpeg("input path not valid UTF-8".into()))?,
+            "-frames:v",
+            "1",
+            "-vf",
+            vf.as_str(),
+            "-f",
+            "image2",
+            "-q:v",
+            "5",
+        ])
+        .arg(output)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+
+        let result = tokio::time::timeout(self.timeout, cmd.output()).await;
+
+        match result {
+            Err(_) => {
+                remove_quiet(output);
+                Err(MediaError::FfmpegTimeout(self.timeout.as_secs()))
+            }
+            Ok(Err(e)) => {
+                remove_quiet(output);
+                Err(MediaError::Ffmpeg(format!(
+                    "failed to spawn {bin}: {e}",
+                    bin = self.bin
+                )))
+            }
+            Ok(Ok(out)) => {
+                if !out.status.success() {
+                    let stderr = String::from_utf8_lossy(&out.stderr);
+                    let code = out.status.code().unwrap_or(-1);
+                    remove_quiet(output);
+                    return Err(MediaError::Ffmpeg(format!(
+                        "ffmpeg exited {code}: {stderr}"
+                    )));
+                }
+                match std::fs::metadata(output) {
+                    Ok(m) if m.len() > 0 => Ok(output.to_path_buf()),
+                    _ => {
+                        remove_quiet(output);
+                        Err(MediaError::Ffmpeg(
+                            "ffmpeg succeeded but produced an empty thumbnail".into(),
+                        ))
+                    }
+                }
+            }
+        }
+    }
+
     /// Extract the subtitle stream with the given **overall** ffprobe index to
     /// `output` as UTF-8-agnostic SRT (encoding normalization happens later).
     ///
@@ -78,10 +161,16 @@ impl Ffmpeg {
         match result {
             Err(_) => {
                 remove_quiet(output);
+                tracing::warn!(
+                    input = %input.display(),
+                    timeout_secs = self.timeout.as_secs(),
+                    "ffmpeg subtitle extraction timed out"
+                );
                 Err(MediaError::FfmpegTimeout(self.timeout.as_secs()))
             }
             Ok(Err(e)) => {
                 remove_quiet(output);
+                tracing::error!(input = %input.display(), error = %e, "failed to spawn ffmpeg");
                 Err(MediaError::Ffmpeg(format!(
                     "failed to spawn {bin}: {e}",
                     bin = self.bin
@@ -92,15 +181,24 @@ impl Ffmpeg {
                     let stderr = String::from_utf8_lossy(&out.stderr);
                     let code = out.status.code().unwrap_or(-1);
                     remove_quiet(output);
+                    tracing::warn!(input = %input.display(), code, "ffmpeg subtitle extraction failed");
                     return Err(MediaError::Ffmpeg(format!(
                         "ffmpeg exited {code}: {stderr}"
                     )));
                 }
                 // Guard against a zero-byte / partial output file (§6.4).
                 match std::fs::metadata(output) {
-                    Ok(m) if m.len() > 0 => Ok(output.to_path_buf()),
+                    Ok(m) if m.len() > 0 => {
+                        tracing::info!(
+                            input = %input.display(),
+                            output = %output.display(),
+                            "subtitle extracted"
+                        );
+                        Ok(output.to_path_buf())
+                    }
                     _ => {
                         remove_quiet(output);
+                        tracing::warn!(input = %input.display(), "ffmpeg produced an empty subtitle file");
                         Err(MediaError::Ffmpeg(
                             "ffmpeg succeeded but produced an empty output file".into(),
                         ))
@@ -265,5 +363,31 @@ mod tests {
         let content = std::fs::read_to_string(&output).unwrap();
         assert!(content.contains("Hello"), "{content}");
         assert!(content.contains("-->"), "{content}");
+    }
+
+    #[tokio::test]
+    async fn thumbnail_success_writes_output() {
+        let dir = tempfile::tempdir().unwrap();
+        let bin = crate::stubs::writer_tool(dir.path(), "ffmpeg", "jpeg", "", 0);
+        let input = dir.path().join("x.mkv");
+        std::fs::write(&input, b"x").unwrap();
+        let output = dir.path().join("thumb.jpg");
+        let ffmpeg = Ffmpeg::new(bin.to_str().unwrap(), 10);
+        let out = ffmpeg.thumbnail(&input, &output, 160, 90, 1).await.unwrap();
+        assert_eq!(out, output);
+        assert_eq!(std::fs::read_to_string(&output).unwrap().trim(), "jpeg");
+    }
+
+    #[tokio::test]
+    async fn thumbnail_failure_removes_partial_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let bin = crate::stubs::writer_tool(dir.path(), "ffmpeg", "partial", "no video", 1);
+        let input = dir.path().join("x.mkv");
+        std::fs::write(&input, b"x").unwrap();
+        let output = dir.path().join("thumb.jpg");
+        let ffmpeg = Ffmpeg::new(bin.to_str().unwrap(), 10);
+        let err = ffmpeg.thumbnail(&input, &output, 160, 90, 1).await.unwrap_err();
+        assert!(matches!(err, MediaError::Ffmpeg(_)));
+        assert!(!output.exists());
     }
 }

@@ -150,9 +150,22 @@ async fn enrich(
         .filter_map(|k| metas.get(&k.1).map(|m| (k.0.clone(), m.clone())))
         .collect();
 
+    let thumbs: HashMap<String, String> = keys
+        .iter()
+        .map(|k| {
+            (
+                k.0.clone(),
+                lib::thumbnail_url(root, &k.0, k.2, k.3, 160, 90, 1),
+            )
+        })
+        .collect();
+
     files
         .into_iter()
         .map(|mut f| {
+            if f.is_video {
+                f.thumbnail_url = thumbs.get(&f.rel_path).cloned();
+            }
             if let Some(m) = by_rel.get(&f.rel_path) {
                 f.duration_s = m.duration_s;
                 f.container = m.container.clone();

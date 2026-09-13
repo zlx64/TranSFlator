@@ -14,7 +14,7 @@ pub mod store;
 
 pub use events::{JobEvent, JobEventEnvelope};
 pub use machine::{can_transition, transition, TransitionError};
-pub use manager::{JobManager, ManagerError, ManagerResult};
+pub use manager::{DeleteFilter, JobManager, ManagerError, ManagerResult};
 pub use model::{Job, JobStatus, NewJob, RetryMode};
 pub use runner::{FakeRunner, JobRunner, PipelineRunner, RunError};
 pub use store::{JobStore, StoreError, LOG_TAIL_MAX};

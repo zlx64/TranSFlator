@@ -54,6 +54,22 @@ function FileIconFor({ entry }: { entry: LibraryEntry }) {
   return <FileIcon size={16} className="shrink-0 text-muted" />;
 }
 
+function VideoThumb({ entry }: { entry: LibraryEntry }) {
+  const [failed, setFailed] = useState(false);
+  if (!entry.is_video || !entry.thumbnail_url || failed) {
+    return <FileIconFor entry={entry} />;
+  }
+  return (
+    <img
+      src={entry.thumbnail_url}
+      alt=""
+      loading="lazy"
+      onError={() => setFailed(true)}
+      className="h-9 w-16 shrink-0 rounded object-cover bg-surface-2 ring-1 ring-border"
+    />
+  );
+}
+
 function MetaBadges({ entry }: { entry: LibraryEntry }) {
   const badges: string[] = [];
   if (entry.duration_s !== undefined && entry.duration_s !== null)
@@ -570,7 +586,7 @@ function TreeTable({
             >
               <td className="px-4 py-2" />
               <td className="flex items-center gap-2 px-4 py-2">
-                <FileIconFor entry={f} />
+                <VideoThumb entry={f} />
                 {f.name}
               </td>
               <td className="px-4 py-2 text-right text-muted">—</td>
@@ -600,7 +616,7 @@ function TreeTable({
                 )}
               </td>
               <td className="flex items-center gap-2 px-4 py-2">
-                <FileIconFor entry={f} />
+                <VideoThumb entry={f} />
                 {f.name}
                 <MetaBadges entry={f} />
               </td>
@@ -701,7 +717,7 @@ function SearchResults({
                 )}
               </td>
               <td className="flex items-center gap-2 px-4 py-2">
-                <FileIconFor entry={f} />
+                <VideoThumb entry={f} />
                 {f.name}
                 <MetaBadges entry={f} />
               </td>

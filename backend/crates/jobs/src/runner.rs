@@ -191,6 +191,11 @@ impl JobRunner for PipelineRunner {
             let emit = |event: JobEvent| {
                 let _ = events.send(JobEventEnvelope::new(job.id.clone(), event));
             };
+            tracing::info!(
+                job = %job.id,
+                source = %job.source_path.display(),
+                "pipeline started"
+            );
 
             // 1. Source must still be inside a media root.
             let within_root = self
@@ -230,6 +235,12 @@ impl JobRunner for PipelineRunner {
                     .probe(&job.source_path)
                     .await
                     .map_err(|e| RunError::Failed(format!("probe failed: {e}")))?;
+                tracing::info!(
+                    job = %job.id,
+                    subtitles = info.subtitle_count,
+                    audio = info.audio_count,
+                    "probe completed"
+                );
 
                 // 3. Pick the subtitle stream.
                 let stream_index = match job.subtitle_stream_index {
@@ -281,6 +292,7 @@ impl JobRunner for PipelineRunner {
                     .append_log(&job.id, &format!("extracting subtitle stream #{stream_index}"))
                     .await
                     .ok();
+                tracing::info!(job = %job.id, stream = stream_index, "extracting subtitle stream");
 
                 // 4. Extract to the data dir (media roots may be read-only).
                 let extracted = self.extracted_path(&job.id);
@@ -399,6 +411,12 @@ impl JobRunner for PipelineRunner {
                 };
                 emit(JobEvent::Log { line: start_msg.clone() });
                 store.append_log(&job.id, &start_msg).await.ok();
+                tracing::info!(
+                    job = %job.id,
+                    provider = provider.as_str(),
+                    attempt,
+                    "starting translation subprocess"
+                );
 
                 let mut child = spawn_translation(
                     &self.config.llm_subtrans_home,
@@ -466,6 +484,12 @@ impl JobRunner for PipelineRunner {
                         format!("transient error — retrying in {}s", backoff.as_secs());
                     emit(JobEvent::Log { line: wait_msg.clone() });
                     store.append_log(&job.id, &wait_msg).await.ok();
+                    tracing::warn!(
+                        job = %job.id,
+                        attempt,
+                        backoff_secs = backoff.as_secs(),
+                        "transient translation failure"
+                    );
                     tokio::select! {
                         _ = cancel.cancelled() => {
                             return Err(RunError::Canceled);
@@ -484,6 +508,7 @@ impl JobRunner for PipelineRunner {
                     )
                 };
                 store.set_error(&job.id, &msg).await.ok();
+                tracing::error!(job = %job.id, error = %msg, "translation failed");
                 return Err(RunError::Failed(msg));
             }
 
@@ -499,6 +524,7 @@ impl JobRunner for PipelineRunner {
                     .await
                     .ok();
             }
+            tracing::info!(job = %job.id, output = %output.display(), "pipeline completed");
             Ok(output.to_string_lossy().to_string())
         })
     }

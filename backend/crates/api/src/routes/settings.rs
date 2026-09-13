@@ -323,5 +323,10 @@ pub async fn put(
             .map_err(ApiError::db)?;
     }
 
+    tracing::info!(
+        api_keys = body.api_keys.as_ref().map(|m| m.len()).unwrap_or(0),
+        auth_token_changed = body.auth_token.is_some(),
+        "settings updated"
+    );
     Ok(Json(build_response(&state).await?))
 }

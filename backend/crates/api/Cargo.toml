@@ -23,6 +23,7 @@ thiserror.workspace = true
 anyhow.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
+tracing-appender.workspace = true
 futures-util.workspace = true
 mime_guess.workspace = true
 reqwest.workspace = true
@@ -30,3 +31,6 @@ transflator-config.workspace = true
 transflator-media.workspace = true
 transflator-translate.workspace = true
 transflator-jobs.workspace = true
+
+[dev-dependencies]
+tempfile = "3"

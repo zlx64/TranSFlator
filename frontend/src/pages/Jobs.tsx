@@ -9,6 +9,7 @@ import {
   RefreshCw,
   RotateCw,
   Terminal,
+  Trash2,
   XCircle,
 } from "lucide-react";
 import {
@@ -59,11 +60,57 @@ function ProgressBar({ pct }: { pct: number }) {
   );
 }
 
+interface DeleteRequest {
+  title: string;
+  message: string;
+  confirmLabel: string;
+  run: () => Promise<void>;
+}
+
+function ConfirmDialog({
+  request,
+  busy,
+  onConfirm,
+  onCancel,
+}: {
+  request: DeleteRequest;
+  busy: boolean;
+  onConfirm: () => void;
+  onCancel: () => void;
+}) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+      <div className="w-full max-w-md rounded-xl border border-border bg-surface p-5 shadow-xl">
+        <h2 className="text-base font-semibold">{request.title}</h2>
+        <p className="mt-2 text-sm text-muted">{request.message}</p>
+        <div className="mt-5 flex justify-end gap-2">
+          <button
+            onClick={onCancel}
+            disabled={busy}
+            className="rounded-lg border border-border bg-surface-2 px-3 py-1.5 text-sm hover:border-accent disabled:opacity-50"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={onConfirm}
+            disabled={busy}
+            className="rounded-lg bg-danger px-3 py-1.5 text-sm font-medium text-white hover:bg-danger/90 disabled:opacity-50"
+          >
+            {busy ? "Deleting…" : request.confirmLabel}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function Jobs() {
   const queryClient = useQueryClient();
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [retryMode, setRetryMode] = useState<Record<string, string>>({});
   const [flash, setFlash] = useState<string | null>(null);
+  const [deleteRequest, setDeleteRequest] = useState<DeleteRequest | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   const jobsQuery = useQuery({
     queryKey: ["jobs", "list"],
@@ -74,6 +121,12 @@ export default function Jobs() {
 
   const invalidate = () =>
     queryClient.invalidateQueries({ queryKey: ["jobs", "list"] });
+
+  const statusCount = (status: JobStatus) =>
+    jobs.filter((job) => job.status === status).length;
+  const activeCount = jobs.filter(
+    (job) => job.status === "queued" || job.status === "running",
+  ).length;
 
   // Live log + progress for the expanded job, streamed over the per-job WS.
   const [liveLog, setLiveLog] = useState<string[]>([]);
@@ -142,21 +195,116 @@ export default function Jobs() {
     }
   }
 
+  function requestDeleteJob(job: Job) {
+    const active = job.status === "queued" || job.status === "running";
+    setDeleteRequest({
+      title: "Delete job?",
+      message: `Remove “${basename(job.source_path)}” from history?${
+        active ? " It is in progress and will be stopped immediately." : ""
+      }`,
+      confirmLabel: "Delete",
+      run: async () => {
+        await api.deleteJob(job.id);
+        if (expandedId === job.id) setExpandedId(null);
+        invalidate();
+      },
+    });
+  }
+
+  function requestDeleteMany(
+    filter: "all" | "failed" | "done" | "interrupted",
+    label: string,
+    count: number,
+  ) {
+    if (count === 0) return;
+    const activeNote =
+      filter === "all" && activeCount > 0
+        ? ` ${activeCount} in-progress job(s) will be stopped immediately.`
+        : "";
+    setDeleteRequest({
+      title: `Delete ${label} jobs?`,
+      message: `Remove ${count} ${label} job(s) from history?${activeNote}`,
+      confirmLabel: `Delete ${count}`,
+      run: async () => {
+        await api.deleteJobs(filter);
+        setExpandedId(null);
+        invalidate();
+      },
+    });
+  }
+
+  async function confirmDelete() {
+    if (!deleteRequest) return;
+    setDeleting(true);
+    try {
+      await deleteRequest.run();
+      setDeleteRequest(null);
+    } catch (e) {
+      showError(e);
+      setDeleteRequest(null);
+    } finally {
+      setDeleting(false);
+    }
+  }
+
   return (
     <div>
-      <div className="mb-4 flex items-center justify-between">
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
         <h1 className="text-xl font-semibold">Jobs</h1>
-        <button
-          onClick={() => jobsQuery.refetch()}
-          disabled={jobsQuery.isRefetching}
-          className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-surface-2 px-3 py-1.5 text-sm hover:border-accent disabled:opacity-50"
-        >
-          <RefreshCw
-            size={14}
-            className={cn(jobsQuery.isRefetching && "animate-spin")}
-          />
-          Refresh
-        </button>
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="flex flex-wrap items-center gap-1 rounded-lg border border-border bg-surface-2 p-1">
+            <span className="px-1 text-xs text-muted">Clear</span>
+            <button
+              onClick={() =>
+                requestDeleteMany("failed", "failed", statusCount("failed"))
+              }
+              disabled={statusCount("failed") === 0}
+              className="rounded-md px-2 py-1 text-xs text-danger hover:bg-danger/10 disabled:opacity-40"
+            >
+              Failed ({statusCount("failed")})
+            </button>
+            <button
+              onClick={() =>
+                requestDeleteMany("done", "completed", statusCount("done"))
+              }
+              disabled={statusCount("done") === 0}
+              className="rounded-md px-2 py-1 text-xs text-success hover:bg-success/10 disabled:opacity-40"
+            >
+              Completed ({statusCount("done")})
+            </button>
+            <button
+              onClick={() =>
+                requestDeleteMany(
+                  "interrupted",
+                  "interrupted",
+                  statusCount("interrupted"),
+                )
+              }
+              disabled={statusCount("interrupted") === 0}
+              className="rounded-md px-2 py-1 text-xs text-warning hover:bg-warning/10 disabled:opacity-40"
+            >
+              Interrupted ({statusCount("interrupted")})
+            </button>
+            <button
+              onClick={() => requestDeleteMany("all", "all", jobs.length)}
+              disabled={jobs.length === 0}
+              className="rounded-md px-2 py-1 text-xs text-danger hover:bg-danger/10 disabled:opacity-40"
+            >
+              All ({jobs.length})
+            </button>
+          </div>
+          <button
+            onClick={() => jobsQuery.refetch()}
+            disabled={jobsQuery.isRefetching}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-surface-2 px-3 py-1.5 text-sm hover:border-accent disabled:opacity-50"
+          >
+            <RefreshCw
+              size={14}
+              className={cn(jobsQuery.isRefetching && "animate-spin")}
+            />
+            Refresh
+          </button>
+        </div>
       </div>
 
       {flash && (
@@ -211,9 +359,17 @@ export default function Jobs() {
                 key={job.id}
                 className="overflow-hidden rounded-xl border border-border bg-surface"
               >
-                <button
+                <div
+                  role="button"
+                  tabIndex={0}
                   onClick={() => setExpandedId(isExpanded ? null : job.id)}
-                  className="flex w-full items-center gap-3 px-4 py-3 text-left hover:bg-surface-2/50"
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      setExpandedId(isExpanded ? null : job.id);
+                    }
+                  }}
+                  className="flex w-full cursor-pointer items-center gap-3 px-4 py-3 text-left hover:bg-surface-2/50"
                 >
                   <span className="shrink-0 text-muted">
                     {isExpanded ? (
@@ -238,7 +394,18 @@ export default function Jobs() {
                       {pct}%
                     </span>
                   </span>
-                </button>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      requestDeleteJob(job);
+                    }}
+                    title="Delete job"
+                    aria-label="Delete job"
+                    className="ml-1 inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-border text-muted hover:border-danger/40 hover:bg-danger/10 hover:text-danger"
+                  >
+                    <Trash2 size={14} />
+                  </button>
+                </div>
 
                 {isExpanded && (
                   <div className="border-t border-border px-4 py-3">
@@ -313,6 +480,15 @@ export default function Jobs() {
             );
           })}
         </div>
+      )}
+
+      {deleteRequest && (
+        <ConfirmDialog
+          request={deleteRequest}
+          busy={deleting}
+          onConfirm={confirmDelete}
+          onCancel={() => setDeleteRequest(null)}
+        />
       )}
     </div>
   );

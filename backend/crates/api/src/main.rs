@@ -9,9 +9,11 @@ mod routes;
 mod state;
 
 use std::net::SocketAddr;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
+use anyhow::Context;
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::routing::{get, post};
@@ -20,6 +22,7 @@ use tower_http::compression::CompressionLayer;
 use tower_http::services::{ServeDir, ServeFile};
 use tower_http::trace::TraceLayer;
 use tracing::{info, warn};
+use tracing_appender::rolling::{RollingFileAppender, Rotation};
 
 use transflator_config::{AppConfig, Secrets, SettingsStore};
 use transflator_jobs::{JobManager, PipelineRunner};
@@ -31,10 +34,32 @@ use state::AppState;
 async fn main() -> anyhow::Result<()> {
     let mut config = AppConfig::from_env();
 
-    // Structured logging (NFR-6).
+    // Structured logging (NFR-6): rolling files live next to the database.
+    let logs_dir = logs_dir_for(&config.db_path);
+    std::fs::create_dir_all(&logs_dir)
+        .with_context(|| format!("failed to create logs dir {}", logs_dir.display()))?;
+    let logs_dir = std::fs::canonicalize(&logs_dir)
+        .with_context(|| format!("failed to canonicalize logs dir {}", logs_dir.display()))?;
+    let file_appender = RollingFileAppender::builder()
+        .rotation(Rotation::DAILY)
+        .filename_prefix("transflator.log")
+        .max_log_files(15)
+        .build(&logs_dir)
+        .map_err(|e| anyhow::anyhow!("failed to initialise log appender: {e}"))?;
+    let (non_blocking, _log_guard) = tracing_appender::non_blocking(file_appender);
     let filter = tracing_subscriber::EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new(&config.log_level));
-    tracing_subscriber::fmt().with_env_filter(filter).with_target(false).init();
+    tracing_subscriber::fmt()
+        .with_env_filter(filter)
+        .with_target(false)
+        .with_ansi(false)
+        .with_writer(non_blocking)
+        .init();
+
+    info!(
+        dir = %logs_dir.display(),
+        "log file initialised"
+    );
 
     info!(
         roots = ?config.media_roots,
@@ -79,6 +104,7 @@ async fn main() -> anyhow::Result<()> {
     let pool = transflator_config::db::init_pool(&config.db_path)
         .await
         .inspect_err(|e| tracing::error!(error = %e, "failed to initialise database"))?;
+    info!(db = %config.db_path.display(), "database ready");
 
     // Apply the stored concurrency override (Settings) before the manager fixes
     // the concurrency bound at construction.
@@ -88,6 +114,7 @@ async fn main() -> anyhow::Result<()> {
             config.concurrency = eff.concurrency;
         }
     }
+    info!(concurrency = config.concurrency, "effective concurrency loaded");
 
     // Job pipeline + queue (Phase 4): probe → extract → llm-subtrans.
     let runner = Arc::new(PipelineRunner {
@@ -112,6 +139,7 @@ async fn main() -> anyhow::Result<()> {
 
     let state = Arc::new(AppState {
         config: Arc::new(config.clone()),
+        logs_dir: logs_dir.clone(),
         pool,
         secrets,
         guard,
@@ -121,6 +149,7 @@ async fn main() -> anyhow::Result<()> {
 
     // Spawn the queue worker (recovers interrupted jobs, re-queues pending).
     manager.start();
+    info!("job queue started");
 
     let app = build_router(state.clone());
 
@@ -179,15 +208,23 @@ fn build_router(state: Arc<AppState>) -> axum::Router {
 
     let api = axum::Router::new()
         .route("/healthz", get(healthz))
+        .route("/health/logs", get(routes::health::list))
+        .route("/health/logs/:name", get(routes::health::download))
         .route("/library/roots", get(routes::library::roots))
         .route("/library/tree", get(routes::library::tree))
         .route("/library/search", get(routes::library::search))
         .route("/media/streams", get(routes::media::streams))
         .route("/media/file", get(routes::media::file))
+        .route("/media/thumbnail", get(routes::media::thumbnail))
         .route("/models", get(routes::models::list))
-        .route("/jobs", post(routes::jobs::create).get(routes::jobs::list))
+        .route(
+            "/jobs",
+            post(routes::jobs::create)
+                .get(routes::jobs::list)
+                .delete(routes::jobs::delete_many),
+        )
         .route("/jobs/upload", post(routes::jobs::upload))
-        .route("/jobs/:id", get(routes::jobs::get))
+        .route("/jobs/:id", get(routes::jobs::get).delete(routes::jobs::delete))
         .route("/jobs/:id/cancel", post(routes::jobs::cancel))
         .route("/jobs/:id/retry", post(routes::jobs::retry))
         .route("/jobs/:id/download", get(routes::jobs::download))
@@ -238,4 +275,12 @@ async fn healthz() -> impl IntoResponse {
 /// the stragglers interrupted (NFR-6).
 fn drain_timeout() -> Duration {
     Duration::from_secs(30)
+}
+
+/// Log files are stored in a `logs` folder next to the SQLite database file.
+fn logs_dir_for(db_path: &Path) -> PathBuf {
+    db_path
+        .parent()
+        .map(|parent| parent.join("logs"))
+        .unwrap_or_else(|| PathBuf::from("logs"))
 }

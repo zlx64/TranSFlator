@@ -64,6 +64,38 @@ async function request<T>(
   return (await res.json()) as T;
 }
 
+export async function downloadLog(name: string): Promise<void> {
+  const token = getToken();
+  const res = await fetch(`/api/health/logs/${encodeURIComponent(name)}`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+  if (!res.ok) {
+    let message = `${res.status} ${res.statusText}`;
+    try {
+      const data = await res.json();
+      if (
+        data &&
+        typeof data === "object" &&
+        typeof (data as Record<string, unknown>).error === "string"
+      ) {
+        message = (data as { error: string }).error;
+      }
+    } catch {
+      // non-JSON error body; keep the default message
+    }
+    throw new ApiError(res.status, message);
+  }
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = name;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
 export async function downloadJob(id: string, filename: string): Promise<void> {
   const token = getToken();
   const res = await fetch(`/api/jobs/${id}/download`, {
@@ -124,6 +156,10 @@ export const api = {
   getJob: (id: string) => request<{ job: Job }>(`/api/jobs/${id}`),
   cancelJob: (id: string) =>
     request<{ ok: boolean }>(`/api/jobs/${id}/cancel`, { method: "POST" }),
+  deleteJob: (id: string) =>
+    request<{ ok: boolean }>(`/api/jobs/${id}`, { method: "DELETE" }),
+  deleteJobs: (filter: "all" | "failed" | "done" | "interrupted") =>
+    request<{ ok: boolean; deleted: number }>("/api/jobs", { method: "DELETE" }, { filter }),
   retryJob: (id: string, mode: string) =>
     request<{ job: Job }>(`/api/jobs/${id}/retry`, {
       method: "POST",
@@ -162,6 +198,10 @@ export const api = {
   /** List a provider's models for the dropdown (empty if not listable). */
   listModels: (provider: string) =>
     request<ModelsResponse>("/api/models", { method: "GET" }, { provider }),
+
+  // ---- Health / diagnostics ----
+  listLogs: () => request<LogsResponse>("/api/health/logs", { method: "GET" }),
+  downloadLog,
 };
 
 /** Translation providers (mirrors the backend `Provider::all()` order). */
@@ -313,6 +353,16 @@ export interface HealthResponse {
   time: string;
 }
 
+export interface LogFile {
+  name: string;
+  size: number;
+  modified_at: string | null;
+}
+
+export interface LogsResponse {
+  logs: LogFile[];
+}
+
 export interface RootInfo {
   index: number;
   name: string;
@@ -331,6 +381,8 @@ export interface LibraryEntry {
   container?: string | null;
   audio_count?: number | null;
   subtitle_count?: number | null;
+  /** Unique, cacheable thumbnail URL for video files. */
+  thumbnail_url?: string | null;
 }
 
 export interface LibraryTreeResponse {
@@ -385,6 +437,8 @@ export interface StreamsResponse {
   selection: Selection;
   /** Picker pre-highlight (default track, else first text track). */
   preferred: number | null;
+  /** Unique, cacheable thumbnail URL for the current video file. */
+  thumbnail_url?: string | null;
 }
 
 export type JobStatus =

@@ -46,7 +46,10 @@ pub async fn require_token(
         Some(provided) if constant_time_eq(provided.as_bytes(), expected.as_bytes()) => {
             Ok(next.run(req).await)
         }
-        _ => Err(ApiError::unauthorized("invalid or missing access token")),
+        _ => {
+            tracing::warn!(path, "invalid or missing access token");
+            Err(ApiError::unauthorized("invalid or missing access token"))
+        }
     }
 }
 

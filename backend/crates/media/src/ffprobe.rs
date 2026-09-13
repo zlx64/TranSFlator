@@ -73,14 +73,24 @@ impl Ffprobe {
             .stderr(std::process::Stdio::piped());
 
         let output = match tokio::time::timeout(self.timeout, cmd.output()).await {
-            Ok(result) => result
-                .map_err(|e| MediaError::Ffprobe(format!("failed to spawn {bin}: {e}", bin = self.bin)))?,
-            Err(_) => return Err(MediaError::FfprobeTimeout(self.timeout.as_secs())),
+            Ok(result) => result.map_err(|e| {
+                tracing::error!(path = %path.display(), error = %e, "failed to spawn ffprobe");
+                MediaError::Ffprobe(format!("failed to spawn {bin}: {e}", bin = self.bin))
+            })?,
+            Err(_) => {
+                tracing::warn!(
+                    path = %path.display(),
+                    timeout_secs = self.timeout.as_secs(),
+                    "ffprobe timed out"
+                );
+                return Err(MediaError::FfprobeTimeout(self.timeout.as_secs()));
+            }
         };
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
             let code = output.status.code().unwrap_or(-1);
+            tracing::warn!(path = %path.display(), code, "ffprobe failed");
             return Err(MediaError::Ffprobe(format!(
                 "ffprobe exited {code}: {stderr} — the file may be corrupted or use an unsupported container"
             )));
@@ -88,6 +98,7 @@ impl Ffprobe {
 
         let parsed: FfprobeOutput =
             serde_json::from_slice(&output.stdout).map_err(MediaError::Json)?;
+        tracing::info!(path = %path.display(), streams = parsed.streams.len(), "ffprobe completed");
         Ok(self.to_media_info(path, &parsed))
     }
 

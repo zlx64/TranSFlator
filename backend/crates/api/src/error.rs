@@ -6,6 +6,7 @@ use axum::Json;
 use transflator_jobs::ManagerError;
 use transflator_media::MediaError;
 
+#[derive(Debug)]
 pub struct ApiError {
     status: StatusCode,
     code: String,

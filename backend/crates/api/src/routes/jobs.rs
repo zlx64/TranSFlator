@@ -20,7 +20,7 @@ use axum::Json;
 use futures_util::StreamExt;
 use serde::Deserialize;
 use transflator_config::settings::{keys, SettingsStore};
-use transflator_jobs::{Job, JobEvent, JobStatus, NewJob, RetryMode};
+use transflator_jobs::{DeleteFilter, Job, JobEvent, JobStatus, NewJob, RetryMode};
 use transflator_media::MediaError;
 
 use crate::error::ApiError;
@@ -361,6 +361,51 @@ pub async fn cancel(
         .await
         .map_err(|e| ApiError::from_manager(&e))?;
     Ok(Json(serde_json::json!({ "ok": true })))
+}
+
+/// `DELETE /api/jobs/:id` — remove one job from history. Running jobs are
+/// canceled immediately before deletion.
+pub async fn delete(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    state
+        .manager
+        .delete_job(&id)
+        .await
+        .map_err(|e| ApiError::from_manager(&e))?;
+    Ok(Json(serde_json::json!({ "ok": true })))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct DeleteJobsQuery {
+    /// `all` | `failed` | `done` | `interrupted`.
+    pub filter: String,
+}
+
+/// `DELETE /api/jobs?filter=` — remove a group of jobs from history. Running
+/// jobs in the selected group are canceled immediately before deletion.
+pub async fn delete_many(
+    State(state): State<Arc<AppState>>,
+    Query(q): Query<DeleteJobsQuery>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let filter = match q.filter.trim().to_ascii_lowercase().as_str() {
+        "all" => DeleteFilter::All,
+        "failed" => DeleteFilter::Failed,
+        "done" => DeleteFilter::Done,
+        "interrupted" => DeleteFilter::Interrupted,
+        other => {
+            return Err(ApiError::bad_request(format!(
+                "unknown delete filter: {other}"
+            )))
+        }
+    };
+    let deleted = state
+        .manager
+        .delete_jobs(filter)
+        .await
+        .map_err(|e| ApiError::from_manager(&e))?;
+    Ok(Json(serde_json::json!({ "ok": true, "deleted": deleted })))
 }
 
 #[derive(Debug, Deserialize)]

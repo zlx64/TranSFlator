@@ -1,5 +1,6 @@
 //! Shared application state handed to every handler.
 
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use transflator_config::{AppConfig, Secrets};
@@ -9,6 +10,8 @@ use transflator_media::PathGuard;
 #[derive(Clone)]
 pub struct AppState {
     pub config: Arc<AppConfig>,
+    /// Canonical directory holding rolling log files (downloadable via Health).
+    pub logs_dir: PathBuf,
     pub pool: sqlx::SqlitePool,
     /// Used by the Settings endpoints (Phase 6); the manager holds its own copy.
     #[allow(dead_code)]

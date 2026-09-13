@@ -240,6 +240,61 @@ impl JobStore {
         Ok(())
     }
 
+    /// Delete one job row. Returns the number of rows removed.
+    pub async fn delete(&self, id: &str) -> Result<u64> {
+        let res = sqlx::query("DELETE FROM jobs WHERE id = ?")
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
+        Ok(res.rows_affected())
+    }
+
+    /// List jobs whose status is in `statuses`, most recent first.
+    pub async fn list_by_status(&self, statuses: &[JobStatus]) -> Result<Vec<Job>> {
+        if statuses.is_empty() {
+            return Ok(Vec::new());
+        }
+        let placeholders = statuses
+            .iter()
+            .map(|_| "?")
+            .collect::<Vec<_>>()
+            .join(", ");
+        let sql = format!(
+            "SELECT * FROM jobs WHERE status IN ({placeholders}) ORDER BY created_at DESC, id DESC"
+        );
+        let mut q = sqlx::query_as(&sql);
+        for s in statuses {
+            q = q.bind(s.as_str());
+        }
+        let rows: Vec<JobRow> = q.fetch_all(&self.pool).await?;
+        rows.into_iter().map(|r| r.into_job()).collect()
+    }
+
+    /// Delete every job whose status is in `statuses`.
+    pub async fn delete_by_status(&self, statuses: &[JobStatus]) -> Result<u64> {
+        if statuses.is_empty() {
+            return Ok(0);
+        }
+        let placeholders = statuses
+            .iter()
+            .map(|_| "?")
+            .collect::<Vec<_>>()
+            .join(", ");
+        let sql = format!("DELETE FROM jobs WHERE status IN ({placeholders})");
+        let mut q = sqlx::query(&sql);
+        for s in statuses {
+            q = q.bind(s.as_str());
+        }
+        let res = q.execute(&self.pool).await?;
+        Ok(res.rows_affected())
+    }
+
+    /// Delete every job row.
+    pub async fn delete_all(&self) -> Result<u64> {
+        let res = sqlx::query("DELETE FROM jobs").execute(&self.pool).await?;
+        Ok(res.rows_affected())
+    }
+
     /// On boot: mark any `running` jobs as `interrupted` (§6.11).
     pub async fn recover_interrupted(&self) -> Result<Vec<String>> {
         let rows: Vec<sqlx::sqlite::SqliteRow> =
@@ -442,5 +497,68 @@ mod tests {
         assert_eq!(list.len(), 2);
         assert_eq!(list[0].id, b.id);
         assert_eq!(list[1].id, a.id);
+    }
+
+    #[tokio::test]
+    async fn delete_removes_job() {
+        let store = JobStore::new(pool().await);
+        let job = store.create(&new_job()).await.unwrap();
+        assert_eq!(store.delete(&job.id).await.unwrap(), 1);
+        assert!(matches!(
+            store.get(&job.id).await,
+            Err(StoreError::NotFound(_))
+        ));
+        assert_eq!(store.delete(&job.id).await.unwrap(), 0);
+    }
+
+    #[tokio::test]
+    async fn list_and_delete_by_status_only_match() {
+        let store = JobStore::new(pool().await);
+        let done = store.create(&new_job()).await.unwrap();
+        let failed = store.create(&new_job()).await.unwrap();
+        let queued = store.create(&new_job()).await.unwrap();
+        store
+            .set_status(&done.id, JobStatus::Running)
+            .await
+            .unwrap();
+        store.set_status(&done.id, JobStatus::Done).await.unwrap();
+        store
+            .set_status(&failed.id, JobStatus::Running)
+            .await
+            .unwrap();
+        store
+            .set_status(&failed.id, JobStatus::Failed)
+            .await
+            .unwrap();
+
+        let matching = store
+            .list_by_status(&[JobStatus::Failed])
+            .await
+            .unwrap();
+        assert_eq!(matching.len(), 1);
+        assert_eq!(matching[0].id, failed.id);
+
+        assert_eq!(
+            store
+                .delete_by_status(&[JobStatus::Failed])
+                .await
+                .unwrap(),
+            1
+        );
+        assert!(matches!(
+            store.get(&failed.id).await,
+            Err(StoreError::NotFound(_))
+        ));
+        assert!(store.get(&done.id).await.is_ok());
+        assert!(store.get(&queued.id).await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn delete_all_removes_every_job() {
+        let store = JobStore::new(pool().await);
+        store.create(&new_job()).await.unwrap();
+        store.create(&new_job()).await.unwrap();
+        assert_eq!(store.delete_all().await.unwrap(), 2);
+        assert!(store.list(10).await.unwrap().is_empty());
     }
 }

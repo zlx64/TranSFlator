@@ -19,6 +19,7 @@ chardetng.workspace = true
 fs2.workspace = true
 walkdir.workspace = true
 once_cell.workspace = true
+sha2.workspace = true
 transflator-config.workspace = true
 
 [dev-dependencies]

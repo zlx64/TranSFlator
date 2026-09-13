@@ -49,7 +49,11 @@ pub async fn spawn_translation(
         });
     }
 
-    let child = cmd.spawn()?;
+    tracing::info!(script = %script.display(), "spawning llm-subtrans");
+    let child = cmd.spawn().map_err(|e| {
+        tracing::error!(script = %script.display(), error = %e, "failed to spawn llm-subtrans");
+        e
+    })?;
     Ok(child)
 }
 
