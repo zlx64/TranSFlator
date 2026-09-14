@@ -34,10 +34,7 @@ fn endpoint(provider: Provider) -> Option<(&'static str, Auth)> {
         Provider::OpenAi => Some(("https://api.openai.com/v1/models", Auth::Bearer)),
         Provider::DeepSeek => Some(("https://api.deepseek.com/models", Auth::Bearer)),
         Provider::Mistral => Some(("https://api.mistral.ai/v1/models", Auth::Bearer)),
-        Provider::OpenRouter => Some((
-            "https://openrouter.ai/api/v1/models",
-            Auth::OptionalBearer,
-        )),
+        Provider::OpenRouter => Some(("https://openrouter.ai/api/v1/models", Auth::OptionalBearer)),
         Provider::Gemini => Some((
             "https://generativelanguage.googleapis.com/v1beta/models",
             Auth::Query,
@@ -59,9 +56,8 @@ pub async fn list_models(
     provider: Provider,
     api_key: Option<&str>,
 ) -> Result<Vec<String>, ModelsError> {
-    let (url, auth) = endpoint(provider).ok_or_else(|| {
-        ModelsError::Request("provider does not list models".to_string())
-    })?;
+    let (url, auth) = endpoint(provider)
+        .ok_or_else(|| ModelsError::Request("provider does not list models".to_string()))?;
 
     let mut req = client.get(url);
     match auth {
@@ -144,7 +140,10 @@ pub fn custom_models_url(
 }
 
 fn server_path(server: &str) -> &str {
-    let without_scheme = server.splitn(2, "://").nth(1).unwrap_or(server);
+    let without_scheme = server
+        .split_once("://")
+        .map(|(_, rest)| rest)
+        .unwrap_or(server);
     let path_start = without_scheme
         .find('/')
         .map(|i| i + 1)
@@ -349,11 +348,7 @@ mod tests {
     #[test]
     fn custom_models_url_derives_from_chat_endpoint() {
         assert_eq!(
-            custom_models_url(
-                "http://localhost:11434",
-                Some("/v1/chat/completions"),
-                None
-            ),
+            custom_models_url("http://localhost:11434", Some("/v1/chat/completions"), None),
             Some("http://localhost:11434/v1/models".to_string())
         );
         assert_eq!(

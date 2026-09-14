@@ -134,11 +134,7 @@ pub fn validate(provider: Provider, options: &TranslateOptions) -> Result<(), Tr
 }
 
 /// Build the llm-subtrans command for a translation job.
-pub fn build_command(
-    provider: Provider,
-    options: &TranslateOptions,
-    input: &Path,
-) -> CommandSpec {
+pub fn build_command(provider: Provider, options: &TranslateOptions, input: &Path) -> CommandSpec {
     let mut args: Vec<String> = Vec::new();
     let mut env: HashMap<String, String> = HashMap::new();
 
@@ -310,14 +306,23 @@ mod tests {
         let spec = build_command(Provider::OpenAi, &o, Path::new("/in/sub.srt"));
         assert_eq!(spec.script, "scripts/gpt-subtrans.py");
         // API key must be in env, NOT on the command line.
-        assert_eq!(spec.env.get("OPENAI_API_KEY").map(String::as_str), Some("sk-test"));
-        assert!(!spec.args.iter().any(|a| a == "sk-test"), "key leaked onto argv");
+        assert_eq!(
+            spec.env.get("OPENAI_API_KEY").map(String::as_str),
+            Some("sk-test")
+        );
+        assert!(
+            !spec.args.iter().any(|a| a == "sk-test"),
+            "key leaked onto argv"
+        );
         assert!(!spec.args.iter().any(|a| a == "-k"), "used -k for OpenAI");
         // Key flags present.
         assert!(spec.args.windows(2).any(|w| w == ["-l", "Japanese"]));
         assert!(spec.args.windows(2).any(|w| w == ["-m", "gpt-4o-mini"]));
         assert!(spec.args.windows(2).any(|w| w == ["-o", "/out/sub.ja.srt"]));
-        assert!(spec.args.windows(2).any(|w| w == ["--moviename", "My Show"]));
+        assert!(spec
+            .args
+            .windows(2)
+            .any(|w| w == ["--moviename", "My Show"]));
         assert!(spec.args.contains(&"--project".to_string()));
         // Input last.
         assert_eq!(spec.args.last().map(String::as_str), Some("/in/sub.srt"));
@@ -331,7 +336,10 @@ mod tests {
         let spec = build_command(Provider::OpenRouter, &o, Path::new("in.srt"));
         assert_eq!(spec.script, "scripts/llm-subtrans.py");
         assert!(spec.args.contains(&"--auto".to_string()));
-        assert_eq!(spec.env.get("OPENROUTER_API_KEY").map(String::as_str), Some("or-key"));
+        assert_eq!(
+            spec.env.get("OPENROUTER_API_KEY").map(String::as_str),
+            Some("or-key")
+        );
     }
 
     #[test]
@@ -340,7 +348,10 @@ mod tests {
         o.model = Some("google/gemini-2.5-flash".into());
         o.api_key = Some("or-key".into());
         let spec = build_command(Provider::OpenRouter, &o, Path::new("in.srt"));
-        assert!(spec.args.windows(2).any(|w| w == ["-m", "google/gemini-2.5-flash"]));
+        assert!(spec
+            .args
+            .windows(2)
+            .any(|w| w == ["-m", "google/gemini-2.5-flash"]));
         assert!(!spec.args.contains(&"--auto".to_string()));
     }
 
@@ -351,8 +362,14 @@ mod tests {
         o.api_key = Some("gm-key".into());
         let spec = build_command(Provider::Gemini, &o, Path::new("in.srt"));
         assert_eq!(spec.script, "scripts/gemini-subtrans.py");
-        assert!(spec.args.windows(2).any(|w| w == ["-m", "gemini-2.5-flash"]));
-        assert_eq!(spec.env.get("GEMINI_API_KEY").map(String::as_str), Some("gm-key"));
+        assert!(spec
+            .args
+            .windows(2)
+            .any(|w| w == ["-m", "gemini-2.5-flash"]));
+        assert_eq!(
+            spec.env.get("GEMINI_API_KEY").map(String::as_str),
+            Some("gm-key")
+        );
     }
 
     #[test]
@@ -362,7 +379,10 @@ mod tests {
         o.api_key = Some("an-key".into());
         let spec = build_command(Provider::Claude, &o, Path::new("in.srt"));
         assert_eq!(spec.script, "scripts/claude-subtrans.py");
-        assert_eq!(spec.env.get("ANTHROPIC_API_KEY").map(String::as_str), Some("an-key"));
+        assert_eq!(
+            spec.env.get("ANTHROPIC_API_KEY").map(String::as_str),
+            Some("an-key")
+        );
     }
 
     #[test]
@@ -373,8 +393,14 @@ mod tests {
         o.api_key = Some("ds-key".into());
         let spec = build_command(Provider::DeepSeek, &o, Path::new("in.srt"));
         assert_eq!(spec.script, "scripts/deepseek-subtrans.py");
-        assert!(spec.args.windows(2).any(|w| w == ["-b", "https://api.deepseek.com"]));
-        assert_eq!(spec.env.get("DEEPSEEK_API_KEY").map(String::as_str), Some("ds-key"));
+        assert!(spec
+            .args
+            .windows(2)
+            .any(|w| w == ["-b", "https://api.deepseek.com"]));
+        assert_eq!(
+            spec.env.get("DEEPSEEK_API_KEY").map(String::as_str),
+            Some("ds-key")
+        );
     }
 
     #[test]
@@ -385,8 +411,14 @@ mod tests {
         o.api_key = Some("ms-key".into());
         let spec = build_command(Provider::Mistral, &o, Path::new("in.srt"));
         assert_eq!(spec.script, "scripts/mistral-subtrans.py");
-        assert!(spec.args.windows(2).any(|w| w == ["--server_url", "https://custom.mistral.example"]));
-        assert_eq!(spec.env.get("MISTRAL_API_KEY").map(String::as_str), Some("ms-key"));
+        assert!(spec
+            .args
+            .windows(2)
+            .any(|w| w == ["--server_url", "https://custom.mistral.example"]));
+        assert_eq!(
+            spec.env.get("MISTRAL_API_KEY").map(String::as_str),
+            Some("ms-key")
+        );
     }
 
     #[test]
@@ -399,8 +431,14 @@ mod tests {
         // No API key (local server).
         let spec = build_command(Provider::Custom, &o, Path::new("in.srt"));
         assert_eq!(spec.script, "scripts/llm-subtrans.py");
-        assert!(spec.args.windows(2).any(|w| w == ["-s", "http://localhost:1234"]));
-        assert!(spec.args.windows(2).any(|w| w == ["-e", "/v1/chat/completions"]));
+        assert!(spec
+            .args
+            .windows(2)
+            .any(|w| w == ["-s", "http://localhost:1234"]));
+        assert!(spec
+            .args
+            .windows(2)
+            .any(|w| w == ["-e", "/v1/chat/completions"]));
         assert!(spec.args.windows(2).any(|w| w == ["-m", "local-model"]));
         assert!(spec.args.contains(&"--chat".to_string()));
         // No key -> no -k, no env.
@@ -470,7 +508,13 @@ mod tests {
         o.movie_name = Some("攻殻機動隊".into());
         o.api_key = Some("k".into());
         let spec = build_command(Provider::OpenAi, &o, Path::new("/media/アニメ/第1話.srt"));
-        assert!(spec.args.windows(2).any(|w| w == ["--moviename", "攻殻機動隊"]));
-        assert_eq!(spec.args.last().map(String::as_str), Some("/media/アニメ/第1話.srt"));
+        assert!(spec
+            .args
+            .windows(2)
+            .any(|w| w == ["--moviename", "攻殻機動隊"]));
+        assert_eq!(
+            spec.args.last().map(String::as_str),
+            Some("/media/アニメ/第1話.srt")
+        );
     }
 }

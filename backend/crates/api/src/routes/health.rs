@@ -19,9 +19,7 @@ use crate::state::AppState;
 const LOG_PREFIX: &str = "transflator.log";
 
 /// `GET /api/health/logs`
-pub async fn list(
-    State(state): State<Arc<AppState>>,
-) -> Result<Json<serde_json::Value>, ApiError> {
+pub async fn list(State(state): State<Arc<AppState>>) -> Result<Json<serde_json::Value>, ApiError> {
     let logs = list_log_files(&state.logs_dir).await?;
     Ok(Json(serde_json::json!({ "logs": logs })))
 }
@@ -32,18 +30,19 @@ pub async fn download(
     Path(name): Path<String>,
 ) -> Result<impl IntoResponse, ApiError> {
     let path = resolve_log_path(&state.logs_dir, &name)?;
-    let bytes = tokio::fs::read(&path)
-        .await
-        .map_err(|e| {
-            tracing::warn!(name, error = %e, "failed to read log file");
-            ApiError::not_found(format!("log file not found: {name}"))
-        })?;
+    let bytes = tokio::fs::read(&path).await.map_err(|e| {
+        tracing::warn!(name, error = %e, "failed to read log file");
+        ApiError::not_found(format!("log file not found: {name}"))
+    })?;
 
     let cd = format!("attachment; filename=\"{}\"", name.replace('"', ""));
     Ok((
         [
             (header::CONTENT_DISPOSITION, cd),
-            (header::CONTENT_TYPE, "text/plain; charset=utf-8".to_string()),
+            (
+                header::CONTENT_TYPE,
+                "text/plain; charset=utf-8".to_string(),
+            ),
             (header::CONTENT_LENGTH, bytes.len().to_string()),
         ],
         bytes,
@@ -51,12 +50,10 @@ pub async fn download(
 }
 
 async fn list_log_files(logs_dir: &std::path::Path) -> Result<Vec<serde_json::Value>, ApiError> {
-    let mut rd = tokio::fs::read_dir(logs_dir)
-        .await
-        .map_err(|e| {
-            tracing::warn!(dir = %logs_dir.display(), error = %e, "failed to read logs dir");
-            ApiError::internal(format!("failed to read logs dir: {e}"))
-        })?;
+    let mut rd = tokio::fs::read_dir(logs_dir).await.map_err(|e| {
+        tracing::warn!(dir = %logs_dir.display(), error = %e, "failed to read logs dir");
+        ApiError::internal(format!("failed to read logs dir: {e}"))
+    })?;
 
     let mut files = Vec::new();
     while let Some(entry) = rd
@@ -82,11 +79,10 @@ async fn list_log_files(logs_dir: &std::path::Path) -> Result<Vec<serde_json::Va
             .modified()
             .ok()
             .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
-            .map(|d| {
+            .and_then(|d| {
                 DateTime::<Utc>::from_timestamp(d.as_secs() as i64, 0)
                     .map(|dt| dt.to_rfc3339_opts(SecondsFormat::Secs, true))
-            })
-            .flatten();
+            });
         files.push(serde_json::json!({
             "name": name,
             "size": meta.len(),
@@ -145,6 +141,9 @@ mod tests {
             .iter()
             .map(|v| v["name"].as_str().unwrap_or_default())
             .collect();
-        assert_eq!(names, vec!["transflator.log.2024-01-02", "transflator.log.2024-01-01"]);
+        assert_eq!(
+            names,
+            vec!["transflator.log.2024-01-02", "transflator.log.2024-01-01"]
+        );
     }
 }

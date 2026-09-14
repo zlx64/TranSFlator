@@ -40,13 +40,7 @@ pub fn sleeper_tool(dir: &Path, name: &str) -> PathBuf {
 /// A script that writes `content` to its **last** argument, prints
 /// `stderr_line` to stderr, then exits with `code`. Simulates a tool that
 /// leaves a partial file behind before failing.
-pub fn writer_tool(
-    dir: &Path,
-    name: &str,
-    content: &str,
-    stderr_line: &str,
-    code: i32,
-) -> PathBuf {
+pub fn writer_tool(dir: &Path, name: &str, content: &str, stderr_line: &str, code: i32) -> PathBuf {
     let windows_lines: Vec<String> = content
         .lines()
         .map(|l| format!("echo {}", escape_bat(l)))

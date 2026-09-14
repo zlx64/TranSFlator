@@ -49,9 +49,7 @@ async fn build_response(state: &AppState) -> Result<serde_json::Value, ApiError>
         .get_secret(keys::AUTH_TOKEN)
         .await
         .map_err(ApiError::db)?;
-    let auth_token_set = auth_stored
-        .as_ref()
-        .is_some_and(|s| !s.trim().is_empty())
+    let auth_token_set = auth_stored.as_ref().is_some_and(|s| !s.trim().is_empty())
         || !state.config.auth_token.trim().is_empty();
     let auth_token_masked = auth_stored
         .as_ref()
@@ -94,6 +92,38 @@ async fn build_response(state: &AppState) -> Result<serde_json::Value, ApiError>
         .map_err(ApiError::db)?
         .map(|s| s.trim() != "false")
         .unwrap_or(true);
+    let plex_server_url = settings
+        .get(keys::PLEX_SERVER_URL)
+        .await
+        .map_err(ApiError::db)?
+        .unwrap_or_default();
+    let plex_token_stored = settings
+        .get_secret(keys::PLEX_TOKEN)
+        .await
+        .map_err(ApiError::db)?;
+    let plex_token_set = plex_token_stored
+        .as_ref()
+        .is_some_and(|s| !s.trim().is_empty());
+    let plex_token_masked = plex_token_stored
+        .as_ref()
+        .filter(|s| !s.trim().is_empty())
+        .map(|s| Secrets::mask(s));
+    let jellyfin_server_url = settings
+        .get(keys::JELLYFIN_SERVER_URL)
+        .await
+        .map_err(ApiError::db)?
+        .unwrap_or_default();
+    let jellyfin_token_stored = settings
+        .get_secret(keys::JELLYFIN_TOKEN)
+        .await
+        .map_err(ApiError::db)?;
+    let jellyfin_token_set = jellyfin_token_stored
+        .as_ref()
+        .is_some_and(|s| !s.trim().is_empty());
+    let jellyfin_token_masked = jellyfin_token_stored
+        .as_ref()
+        .filter(|s| !s.trim().is_empty())
+        .map(|s| Secrets::mask(s));
 
     Ok(serde_json::json!({
         "providers": providers,
@@ -110,6 +140,12 @@ async fn build_response(state: &AppState) -> Result<serde_json::Value, ApiError>
         "custom_model": custom_model,
         "custom_models_url": custom_models_url,
         "custom_chat": custom_chat,
+        "plex_server_url": plex_server_url,
+        "plex_token_set": plex_token_set,
+        "plex_token_masked": plex_token_masked,
+        "jellyfin_server_url": jellyfin_server_url,
+        "jellyfin_token_set": jellyfin_token_set,
+        "jellyfin_token_masked": jellyfin_token_masked,
     }))
 }
 
@@ -149,6 +185,14 @@ pub struct UpdateSettingsBody {
     pub custom_models_url: Option<String>,
     #[serde(default)]
     pub custom_chat: Option<bool>,
+    #[serde(default)]
+    pub plex_server_url: Option<String>,
+    #[serde(default)]
+    pub plex_token: Option<String>,
+    #[serde(default)]
+    pub jellyfin_server_url: Option<String>,
+    #[serde(default)]
+    pub jellyfin_token: Option<String>,
 }
 
 fn validate_custom_url(value: &str, field: &str) -> Result<String, ApiError> {
@@ -186,7 +230,10 @@ pub async fn put(
             if value.trim().is_empty() {
                 settings.delete(&key).await.map_err(ApiError::db)?;
             } else {
-                settings.set_secret(&key, value).await.map_err(ApiError::db)?;
+                settings
+                    .set_secret(&key, value)
+                    .await
+                    .map_err(ApiError::db)?;
             }
         }
     }
@@ -207,7 +254,10 @@ pub async fn put(
     }
     if let Some(v) = &body.default_model {
         if v.trim().is_empty() {
-            settings.delete(keys::DEFAULT_MODEL).await.map_err(ApiError::db)?;
+            settings
+                .delete(keys::DEFAULT_MODEL)
+                .await
+                .map_err(ApiError::db)?;
         } else {
             settings
                 .set(keys::DEFAULT_MODEL, v.trim())
@@ -230,7 +280,10 @@ pub async fn put(
     }
     if let Some(v) = &body.output_pattern {
         if v.trim().is_empty() {
-            settings.delete(keys::OUTPUT_PATTERN).await.map_err(ApiError::db)?;
+            settings
+                .delete(keys::OUTPUT_PATTERN)
+                .await
+                .map_err(ApiError::db)?;
         } else {
             settings
                 .set(keys::OUTPUT_PATTERN, v)
@@ -257,7 +310,10 @@ pub async fn put(
     }
     if let Some(v) = &body.auth_token {
         if v.trim().is_empty() {
-            settings.delete(keys::AUTH_TOKEN).await.map_err(ApiError::db)?;
+            settings
+                .delete(keys::AUTH_TOKEN)
+                .await
+                .map_err(ApiError::db)?;
         } else {
             settings
                 .set_secret(keys::AUTH_TOKEN, v)
@@ -294,7 +350,10 @@ pub async fn put(
     }
     if let Some(v) = &body.custom_model {
         if v.trim().is_empty() {
-            settings.delete(keys::CUSTOM_MODEL).await.map_err(ApiError::db)?;
+            settings
+                .delete(keys::CUSTOM_MODEL)
+                .await
+                .map_err(ApiError::db)?;
         } else {
             settings
                 .set(keys::CUSTOM_MODEL, v.trim())
@@ -321,6 +380,64 @@ pub async fn put(
             .set(keys::CUSTOM_CHAT, if v { "true" } else { "false" })
             .await
             .map_err(ApiError::db)?;
+    }
+    if let Some(v) = &body.plex_server_url {
+        if v.trim().is_empty() {
+            settings
+                .delete(keys::PLEX_SERVER_URL)
+                .await
+                .map_err(ApiError::db)?;
+        } else {
+            let url = validate_custom_url(v, "plex_server_url")?;
+            settings
+                .set(keys::PLEX_SERVER_URL, &url)
+                .await
+                .map_err(ApiError::db)?;
+        }
+    }
+    if let Some(v) = &body.plex_token {
+        if v.trim().is_empty() {
+            settings
+                .delete(keys::PLEX_TOKEN)
+                .await
+                .map_err(ApiError::db)?;
+            settings
+                .delete(keys::PLEX_LAST_PING)
+                .await
+                .map_err(ApiError::db)?;
+        } else {
+            settings
+                .set_secret(keys::PLEX_TOKEN, v)
+                .await
+                .map_err(ApiError::db)?;
+        }
+    }
+    if let Some(v) = &body.jellyfin_server_url {
+        if v.trim().is_empty() {
+            settings
+                .delete(keys::JELLYFIN_SERVER_URL)
+                .await
+                .map_err(ApiError::db)?;
+        } else {
+            let url = validate_custom_url(v, "jellyfin_server_url")?;
+            settings
+                .set(keys::JELLYFIN_SERVER_URL, &url)
+                .await
+                .map_err(ApiError::db)?;
+        }
+    }
+    if let Some(v) = &body.jellyfin_token {
+        if v.trim().is_empty() {
+            settings
+                .delete(keys::JELLYFIN_TOKEN)
+                .await
+                .map_err(ApiError::db)?;
+        } else {
+            settings
+                .set_secret(keys::JELLYFIN_TOKEN, v)
+                .await
+                .map_err(ApiError::db)?;
+        }
     }
 
     tracing::info!(

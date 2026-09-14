@@ -369,12 +369,8 @@ impl JobManager {
     pub async fn delete_jobs(&self, filter: DeleteFilter) -> ManagerResult<usize> {
         let jobs = match filter {
             DeleteFilter::All => self.store.list(i64::MAX).await?,
-            DeleteFilter::Failed => {
-                self.store.list_by_status(&[JobStatus::Failed]).await?
-            }
-            DeleteFilter::Done => {
-                self.store.list_by_status(&[JobStatus::Done]).await?
-            }
+            DeleteFilter::Failed => self.store.list_by_status(&[JobStatus::Failed]).await?,
+            DeleteFilter::Done => self.store.list_by_status(&[JobStatus::Done]).await?,
             DeleteFilter::Interrupted => {
                 self.store.list_by_status(&[JobStatus::Interrupted]).await?
             }
@@ -389,7 +385,9 @@ impl JobManager {
             DeleteFilter::Failed => self.store.delete_by_status(&[JobStatus::Failed]).await?,
             DeleteFilter::Done => self.store.delete_by_status(&[JobStatus::Done]).await?,
             DeleteFilter::Interrupted => {
-                self.store.delete_by_status(&[JobStatus::Interrupted]).await?
+                self.store
+                    .delete_by_status(&[JobStatus::Interrupted])
+                    .await?
             }
         };
         tracing::info!(filter = ?filter, deleted, "jobs deleted");
@@ -458,6 +456,17 @@ impl JobManager {
                         output_path: output.clone(),
                     },
                 ));
+                let notify_pool = self.pool.clone();
+                let notify_secrets = self.secrets.clone();
+                let notify_source = job.source_path.clone();
+                tokio::spawn(async move {
+                    crate::media_server::notify_job_done(
+                        &notify_pool,
+                        &notify_secrets,
+                        &notify_source,
+                    )
+                    .await;
+                });
                 tracing::info!(job = %id, output = %output, "job done");
             }
             Err(RunError::Canceled) => {
@@ -475,7 +484,9 @@ impl JobManager {
                 let _ = self.store.set_status(&id, JobStatus::Failed).await;
                 let _ = self.events_tx.send(JobEventEnvelope::new(
                     &id,
-                    JobEvent::Failed { message: msg.clone() },
+                    JobEvent::Failed {
+                        message: msg.clone(),
+                    },
                 ));
                 tracing::warn!(job = %id, error = %msg, "job failed");
             }
@@ -535,7 +546,11 @@ mod tests {
         let manager = JobManager::new(config, pool, secrets, guard, runner);
         let store = JobStore::new(manager.pool.clone());
         manager.start();
-        TestEnv { manager, store, dir }
+        TestEnv {
+            manager,
+            store,
+            dir,
+        }
     }
 
     fn new_job(path: &str) -> NewJob {
@@ -553,12 +568,7 @@ mod tests {
         }
     }
 
-    async fn wait_status(
-        store: &JobStore,
-        id: &str,
-        want: JobStatus,
-        timeout: Duration,
-    ) -> Job {
+    async fn wait_status(store: &JobStore, id: &str, want: JobStatus, timeout: Duration) -> Job {
         let start = std::time::Instant::now();
         loop {
             let job = store.get(id).await.unwrap();
@@ -582,8 +592,7 @@ mod tests {
             .create_job(&new_job("C:\\media\\E01.mkv"))
             .await
             .unwrap();
-        let done = wait_status(&env.store, &job.id, JobStatus::Done, Duration::from_secs(5))
-            .await;
+        let done = wait_status(&env.store, &job.id, JobStatus::Done, Duration::from_secs(5)).await;
         assert_eq!(done.progress_pct, 100);
         assert!(done.output_path.is_some());
         assert!(done.error_message.is_none());
@@ -602,7 +611,13 @@ mod tests {
             .await
             .unwrap();
         // Wait until the worker has dispatched it and it is actually running.
-        wait_status(&env.store, &job.id, JobStatus::Running, Duration::from_secs(5)).await;
+        wait_status(
+            &env.store,
+            &job.id,
+            JobStatus::Running,
+            Duration::from_secs(5),
+        )
+        .await;
 
         // Drain with a short window: the hanging job never finishes, so drain
         // reports it still in flight.
@@ -646,8 +661,13 @@ mod tests {
             .create_job(&new_job("C:\\media\\E01.mkv"))
             .await
             .unwrap();
-        let failed = wait_status(&env.store, &job.id, JobStatus::Failed, Duration::from_secs(5))
-            .await;
+        let failed = wait_status(
+            &env.store,
+            &job.id,
+            JobStatus::Failed,
+            Duration::from_secs(5),
+        )
+        .await;
         assert!(
             failed.error_message.as_deref() == Some("fake: forced failure"),
             "error message should be recorded"
@@ -678,12 +698,12 @@ mod tests {
                 let delay = self.delay;
                 Box::pin(async move {
                     let active = gauge.active.fetch_add(1, Ordering::SeqCst) + 1;
-                    gauge
-                        .max
-                        .fetch_max(active, Ordering::SeqCst);
+                    gauge.max.fetch_max(active, Ordering::SeqCst);
                     let _ = events.send(JobEventEnvelope::new(
                         job.id.clone(),
-                        JobEvent::Log { line: "gauge".into() },
+                        JobEvent::Log {
+                            line: "gauge".into(),
+                        },
                     ));
                     tokio::select! {
                         _ = tokio::time::sleep(delay) => {}
@@ -722,7 +742,11 @@ mod tests {
             "max concurrency was {}",
             gauge.max.load(Ordering::SeqCst)
         );
-        assert_eq!(gauge.max.load(Ordering::SeqCst), 2, "should have used the full bound");
+        assert_eq!(
+            gauge.max.load(Ordering::SeqCst),
+            2,
+            "should have used the full bound"
+        );
     }
 
     /// Runner that records the order in which jobs actually start.
@@ -774,7 +798,13 @@ mod tests {
             .create_job(&new_job("C:\\media\\A.mkv"))
             .await
             .unwrap();
-        wait_status(&env.store, &a.id, JobStatus::Running, Duration::from_secs(5)).await;
+        wait_status(
+            &env.store,
+            &a.id,
+            JobStatus::Running,
+            Duration::from_secs(5),
+        )
+        .await;
         // B: normal, queued behind the running A.
         let b = env
             .manager
@@ -824,11 +854,21 @@ mod tests {
             .create_job(&new_job("C:\\media\\E01.mkv"))
             .await
             .unwrap();
-        let running = wait_status(&env.store, &job.id, JobStatus::Running, Duration::from_secs(5))
-            .await;
+        let running = wait_status(
+            &env.store,
+            &job.id,
+            JobStatus::Running,
+            Duration::from_secs(5),
+        )
+        .await;
         env.manager.cancel_job(&running.id).await.unwrap();
-        let canceled =
-            wait_status(&env.store, &job.id, JobStatus::Canceled, Duration::from_secs(5)).await;
+        let canceled = wait_status(
+            &env.store,
+            &job.id,
+            JobStatus::Canceled,
+            Duration::from_secs(5),
+        )
+        .await;
         assert_eq!(canceled.status, JobStatus::Canceled);
     }
 
@@ -849,17 +889,33 @@ mod tests {
             .create_job(&new_job("C:\\media\\A.mkv"))
             .await
             .unwrap();
-        wait_status(&env.store, &a.id, JobStatus::Running, Duration::from_secs(5)).await;
+        wait_status(
+            &env.store,
+            &a.id,
+            JobStatus::Running,
+            Duration::from_secs(5),
+        )
+        .await;
         let b = env
             .manager
             .create_job(&new_job("C:\\media\\B.mkv"))
             .await
             .unwrap();
-        wait_status(&env.store, &b.id, JobStatus::Queued, Duration::from_millis(500))
-            .await;
+        wait_status(
+            &env.store,
+            &b.id,
+            JobStatus::Queued,
+            Duration::from_millis(500),
+        )
+        .await;
         env.manager.cancel_job(&b.id).await.unwrap();
-        let canceled =
-            wait_status(&env.store, &b.id, JobStatus::Canceled, Duration::from_secs(5)).await;
+        let canceled = wait_status(
+            &env.store,
+            &b.id,
+            JobStatus::Canceled,
+            Duration::from_secs(5),
+        )
+        .await;
         assert_eq!(canceled.status, JobStatus::Canceled);
         // Clean up the hung job so the test ends quietly.
         let _ = env.manager.cancel_job(&a.id).await;
@@ -874,8 +930,7 @@ mod tests {
             .create_job(&new_job("C:\\media\\E01.mkv"))
             .await
             .unwrap();
-        let done = wait_status(&env.store, &job.id, JobStatus::Done, Duration::from_secs(5))
-            .await;
+        let done = wait_status(&env.store, &job.id, JobStatus::Done, Duration::from_secs(5)).await;
         // Retry a done job → queued → done again.
         let retried = env
             .manager
@@ -883,8 +938,13 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(retried.status, JobStatus::Queued);
-        let done2 = wait_status(&env.store, &done.id, JobStatus::Done, Duration::from_secs(5))
-            .await;
+        let done2 = wait_status(
+            &env.store,
+            &done.id,
+            JobStatus::Done,
+            Duration::from_secs(5),
+        )
+        .await;
         assert_eq!(done2.status, JobStatus::Done);
     }
 
@@ -904,7 +964,13 @@ mod tests {
             .create_job(&new_job("C:\\media\\E01.mkv"))
             .await
             .unwrap();
-        wait_status(&env.store, &job.id, JobStatus::Running, Duration::from_secs(5)).await;
+        wait_status(
+            &env.store,
+            &job.id,
+            JobStatus::Running,
+            Duration::from_secs(5),
+        )
+        .await;
         assert!(matches!(
             env.manager
                 .retry_job(&job.id, crate::model::RetryMode::Rerun)
@@ -928,7 +994,9 @@ mod tests {
             Box::pin(async move {
                 let _ = events.send(JobEventEnvelope::new(
                     job.id.clone(),
-                    JobEvent::Log { line: "sleep: started".into() },
+                    JobEvent::Log {
+                        line: "sleep: started".into(),
+                    },
                 ));
                 let mut child = tokio::process::Command::new("python")
                     .args(["-c", "import time; time.sleep(30)"])
@@ -972,12 +1040,22 @@ mod tests {
             .create_job(&new_job("C:\\media\\E01.mkv"))
             .await
             .unwrap();
-        let running =
-            wait_status(&env.store, &job.id, JobStatus::Running, Duration::from_secs(5)).await;
+        let running = wait_status(
+            &env.store,
+            &job.id,
+            JobStatus::Running,
+            Duration::from_secs(5),
+        )
+        .await;
         let start = std::time::Instant::now();
         env.manager.cancel_job(&running.id).await.unwrap();
-        let canceled =
-            wait_status(&env.store, &job.id, JobStatus::Canceled, Duration::from_secs(10)).await;
+        let canceled = wait_status(
+            &env.store,
+            &job.id,
+            JobStatus::Canceled,
+            Duration::from_secs(10),
+        )
+        .await;
         assert_eq!(canceled.status, JobStatus::Canceled);
         // If the child weren't killed, the runner would block on wait() for 30s.
         assert!(
@@ -1008,14 +1086,24 @@ mod tests {
                 .create_job(&new_job(&format!("C:\\media\\E{i}.mkv")))
                 .await
                 .unwrap();
-            let running =
-                wait_status(&env.store, &job.id, JobStatus::Running, Duration::from_secs(5)).await;
+            let running = wait_status(
+                &env.store,
+                &job.id,
+                JobStatus::Running,
+                Duration::from_secs(5),
+            )
+            .await;
             env.manager
                 .cancel_job(&running.id)
                 .await
                 .unwrap_or_else(|e| panic!("cancel failed on iter {i}: {e}"));
-            let canceled =
-                wait_status(&env.store, &job.id, JobStatus::Canceled, Duration::from_secs(5)).await;
+            let canceled = wait_status(
+                &env.store,
+                &job.id,
+                JobStatus::Canceled,
+                Duration::from_secs(5),
+            )
+            .await;
             assert_eq!(canceled.status, JobStatus::Canceled);
         }
     }
@@ -1036,14 +1124,25 @@ mod tests {
             .create_job(&new_job("C:\\media\\A.mkv"))
             .await
             .unwrap();
-        wait_status(&env.store, &a.id, JobStatus::Running, Duration::from_secs(5)).await;
+        wait_status(
+            &env.store,
+            &a.id,
+            JobStatus::Running,
+            Duration::from_secs(5),
+        )
+        .await;
         let b = env
             .manager
             .create_job(&new_job("C:\\media\\B.mkv"))
             .await
             .unwrap();
-        wait_status(&env.store, &b.id, JobStatus::Queued, Duration::from_millis(500))
-            .await;
+        wait_status(
+            &env.store,
+            &b.id,
+            JobStatus::Queued,
+            Duration::from_millis(500),
+        )
+        .await;
 
         env.manager.delete_job(&b.id).await.unwrap();
         assert!(matches!(
@@ -1070,7 +1169,13 @@ mod tests {
             .create_job(&new_job("C:\\media\\E01.mkv"))
             .await
             .unwrap();
-        wait_status(&env.store, &job.id, JobStatus::Running, Duration::from_secs(5)).await;
+        wait_status(
+            &env.store,
+            &job.id,
+            JobStatus::Running,
+            Duration::from_secs(5),
+        )
+        .await;
 
         env.manager.delete_job(&job.id).await.unwrap();
         assert!(matches!(
@@ -1136,8 +1241,16 @@ mod tests {
     #[tokio::test]
     async fn delete_jobs_failed_only_removes_failed_rows() {
         let env = env(2, Arc::new(FakeRunner::new())).await;
-        let done = env.store.create(&new_job("C:\\media\\done.mkv")).await.unwrap();
-        let failed = env.store.create(&new_job("C:\\media\\failed.mkv")).await.unwrap();
+        let done = env
+            .store
+            .create(&new_job("C:\\media\\done.mkv"))
+            .await
+            .unwrap();
+        let failed = env
+            .store
+            .create(&new_job("C:\\media\\failed.mkv"))
+            .await
+            .unwrap();
         env.store
             .set_status(&done.id, JobStatus::Running)
             .await
@@ -1155,11 +1268,7 @@ mod tests {
             .await
             .unwrap();
 
-        let deleted = env
-            .manager
-            .delete_jobs(DeleteFilter::Failed)
-            .await
-            .unwrap();
+        let deleted = env.manager.delete_jobs(DeleteFilter::Failed).await.unwrap();
         assert_eq!(deleted, 1);
         assert!(matches!(
             env.store.get(&failed.id).await,

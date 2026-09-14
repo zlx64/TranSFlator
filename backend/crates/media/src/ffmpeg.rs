@@ -57,7 +57,9 @@ impl Ffmpeg {
             "-ss",
             at.as_str(),
             "-i",
-            input.to_str().ok_or_else(|| MediaError::Ffmpeg("input path not valid UTF-8".into()))?,
+            input
+                .to_str()
+                .ok_or_else(|| MediaError::Ffmpeg("input path not valid UTF-8".into()))?,
             "-frames:v",
             "1",
             "-vf",
@@ -146,7 +148,9 @@ impl Ffmpeg {
             "error",
             "-y",
             "-i",
-            input.to_str().ok_or_else(|| MediaError::Ffmpeg("input path not valid UTF-8".into()))?,
+            input
+                .to_str()
+                .ok_or_else(|| MediaError::Ffmpeg("input path not valid UTF-8".into()))?,
             "-map",
             &map,
             "-c:s",
@@ -386,7 +390,10 @@ mod tests {
         std::fs::write(&input, b"x").unwrap();
         let output = dir.path().join("thumb.jpg");
         let ffmpeg = Ffmpeg::new(bin.to_str().unwrap(), 10);
-        let err = ffmpeg.thumbnail(&input, &output, 160, 90, 1).await.unwrap_err();
+        let err = ffmpeg
+            .thumbnail(&input, &output, 160, 90, 1)
+            .await
+            .unwrap_err();
         assert!(matches!(err, MediaError::Ffmpeg(_)));
         assert!(!output.exists());
     }

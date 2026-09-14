@@ -194,6 +194,34 @@ export const api = {
       body: JSON.stringify(body),
     }),
 
+  // ---- Plex PIN authentication / discovery ----
+  plexConnect: () =>
+    request<PlexConnectStart>("/api/settings/plex/connect", {
+      method: "POST",
+    }),
+  plexPoll: (pinId: number) =>
+    request<PlexPollResponse>(`/api/settings/plex/connect/${pinId}`, {
+      method: "GET",
+    }),
+  plexServers: () =>
+    request<PlexServersResponse>("/api/settings/plex/servers", {
+      method: "GET",
+    }),
+  testPlex: (body?: { server_url?: string }) =>
+    request<TestConnectionResponse>("/api/settings/plex/test", {
+      method: "POST",
+      body: JSON.stringify(body ?? {}),
+    }),
+  removePlex: () =>
+    request<{ ok: boolean }>("/api/settings/plex", { method: "DELETE" }),
+  testJellyfin: (body?: { server_url?: string; token?: string }) =>
+    request<TestConnectionResponse>("/api/settings/jellyfin/test", {
+      method: "POST",
+      body: JSON.stringify(body ?? {}),
+    }),
+  removeJellyfin: () =>
+    request<{ ok: boolean }>("/api/settings/jellyfin", { method: "DELETE" }),
+
   // ---- Model discovery (FR-11 extension) ----
   /** List a provider's models for the dropdown (empty if not listable). */
   listModels: (provider: string) =>
@@ -312,6 +340,12 @@ export interface SettingsResponse {
   custom_model: string;
   custom_models_url: string;
   custom_chat: boolean;
+  plex_server_url: string;
+  plex_token_set: boolean;
+  plex_token_masked: string | null;
+  jellyfin_server_url: string;
+  jellyfin_token_set: boolean;
+  jellyfin_token_masked: string | null;
 }
 
 export interface UpdateSettingsBody {
@@ -331,6 +365,45 @@ export interface UpdateSettingsBody {
   custom_model?: string;
   custom_models_url?: string;
   custom_chat?: boolean;
+  plex_server_url?: string;
+  plex_token?: string;
+  jellyfin_server_url?: string;
+  jellyfin_token?: string;
+}
+
+// ---- Plex PIN authentication / discovery ----
+
+export interface PlexConnectStart {
+  pin_id: number;
+  code: string;
+  auth_url: string;
+}
+
+export interface PlexPollResponse {
+  authorized: boolean;
+  token_set: boolean;
+}
+
+export interface PlexServerOption {
+  name: string;
+  url: string;
+  host: string;
+  port: number;
+  secure: boolean;
+  local: boolean;
+  hints: string[];
+}
+
+export interface PlexServersResponse {
+  servers: PlexServerOption[];
+}
+
+export type TestConnectionField = "server_url" | "token" | "general";
+
+export interface TestConnectionResponse {
+  ok: boolean;
+  message: string;
+  field: TestConnectionField;
 }
 
 // ---- Model discovery (FR-11 extension) ----

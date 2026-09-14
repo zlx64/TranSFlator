@@ -75,15 +75,11 @@ impl<'a> MediaCache<'a> {
     /// Returns a map from the (absolute) path to its metadata; missing or stale
     /// keys are omitted. Used to enrich library listings (FR-2) from the
     /// existing ffprobe cache without re-probing.
-    pub async fn get_many(
-        &self,
-        keys: &[(String, u64, i64)],
-    ) -> HashMap<String, CachedMeta> {
+    pub async fn get_many(&self, keys: &[(String, u64, i64)]) -> HashMap<String, CachedMeta> {
         let mut out = HashMap::new();
         for (path, size, mtime) in keys {
             if let Some(info) = self.get(path, *size, *mtime).await {
-                let (_, audio_count, subtitle_count) =
-                    crate::classify::count_kinds(&info.streams);
+                let (_, audio_count, subtitle_count) = crate::classify::count_kinds(&info.streams);
                 out.insert(
                     path.clone(),
                     CachedMeta {
@@ -106,8 +102,7 @@ fn rebuild(
     size: u64,
     streams: Vec<crate::model::Stream>,
 ) -> MediaInfo {
-    let (video_count, audio_count, subtitle_count) =
-        crate::classify::count_kinds(&streams);
+    let (video_count, audio_count, subtitle_count) = crate::classify::count_kinds(&streams);
     MediaInfo {
         path: path.to_string(),
         duration_s,

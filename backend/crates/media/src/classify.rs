@@ -8,8 +8,9 @@ use crate::model::{Selection, Stream, SubtitleKind};
 pub fn classify_subtitle_codec(codec: &str) -> Option<SubtitleKind> {
     match codec.to_ascii_lowercase().as_str() {
         // Text-based: directly extractable / translatable.
-        "subrip" | "srt" | "ass" | "ssa" | "webvtt" | "vtt" | "mov_text" | "text"
-        | "mpeg4" => Some(SubtitleKind::Text),
+        "subrip" | "srt" | "ass" | "ssa" | "webvtt" | "vtt" | "mov_text" | "text" | "mpeg4" => {
+            Some(SubtitleKind::Text)
+        }
         // Image-based: pixel images, not directly translatable (§6.2).
         "hdmv_pgs_subtitle" | "pgs" | "dvd_subtitle" | "vobsub" | "dvb_subtitle"
         | "dvbsubtitle" | "xsub" => Some(SubtitleKind::Image),
@@ -71,7 +72,10 @@ pub fn preferred_subtitle_index(streams: &[Stream]) -> Option<usize> {
     if let Some(d) = subs.iter().find(|s| s.default) {
         return Some(d.index);
     }
-    if let Some(t) = subs.iter().find(|s| s.subtitle_kind == Some(SubtitleKind::Text)) {
+    if let Some(t) = subs
+        .iter()
+        .find(|s| s.subtitle_kind == Some(SubtitleKind::Text))
+    {
         return Some(t.index);
     }
     Some(subs[0].index)
@@ -113,13 +117,22 @@ mod tests {
         assert_eq!(classify_subtitle_codec("subrip"), Some(SubtitleKind::Text));
         assert_eq!(classify_subtitle_codec("ass"), Some(SubtitleKind::Text));
         assert_eq!(classify_subtitle_codec("webvtt"), Some(SubtitleKind::Text));
-        assert_eq!(classify_subtitle_codec("mov_text"), Some(SubtitleKind::Text));
+        assert_eq!(
+            classify_subtitle_codec("mov_text"),
+            Some(SubtitleKind::Text)
+        );
         assert_eq!(
             classify_subtitle_codec("hdmv_pgs_subtitle"),
             Some(SubtitleKind::Image)
         );
-        assert_eq!(classify_subtitle_codec("dvd_subtitle"), Some(SubtitleKind::Image));
-        assert_eq!(classify_subtitle_codec("dvb_subtitle"), Some(SubtitleKind::Image));
+        assert_eq!(
+            classify_subtitle_codec("dvd_subtitle"),
+            Some(SubtitleKind::Image)
+        );
+        assert_eq!(
+            classify_subtitle_codec("dvb_subtitle"),
+            Some(SubtitleKind::Image)
+        );
         assert_eq!(classify_subtitle_codec("h264"), None);
     }
 
@@ -155,7 +168,11 @@ mod tests {
         assert_eq!(select_subtitle(&streams), Selection::Picker);
 
         // Two text tracks -> picker.
-        let streams = vec![other(0), sub(1, "subrip", true, false), sub(2, "ass", false, true)];
+        let streams = vec![
+            other(0),
+            sub(1, "subrip", true, false),
+            sub(2, "ass", false, true),
+        ];
         assert_eq!(select_subtitle(&streams), Selection::Picker);
     }
 

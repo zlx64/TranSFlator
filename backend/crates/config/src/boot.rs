@@ -232,7 +232,8 @@ mod tests {
         cfg.ffmpeg_bin = "definitely-not-a-real-binary-xyz".into();
         let err = validate(&cfg).unwrap_err();
         assert!(
-            err.iter().any(|m| m.contains("definitely-not-a-real-binary-xyz")),
+            err.iter()
+                .any(|m| m.contains("definitely-not-a-real-binary-xyz")),
             "expected ffmpeg to be named, got: {err:?}"
         );
     }

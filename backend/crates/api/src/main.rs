@@ -16,7 +16,7 @@ use std::time::Duration;
 use anyhow::Context;
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
-use axum::routing::{get, post};
+use axum::routing::{delete, get, post};
 use axum::Json;
 use tower_http::compression::CompressionLayer;
 use tower_http::services::{ServeDir, ServeFile};
@@ -85,7 +85,10 @@ async fn main() -> anyhow::Result<()> {
             for p in &problems {
                 tracing::error!(problem = %p, "boot validation failed");
             }
-            anyhow::bail!("boot validation failed with {} problem(s); refusing to start", problems.len());
+            anyhow::bail!(
+                "boot validation failed with {} problem(s); refusing to start",
+                problems.len()
+            );
         }
     }
 
@@ -114,7 +117,10 @@ async fn main() -> anyhow::Result<()> {
             config.concurrency = eff.concurrency;
         }
     }
-    info!(concurrency = config.concurrency, "effective concurrency loaded");
+    info!(
+        concurrency = config.concurrency,
+        "effective concurrency loaded"
+    );
 
     // Job pipeline + queue (Phase 4): probe → extract → llm-subtrans.
     let runner = Arc::new(PipelineRunner {
@@ -188,8 +194,7 @@ async fn main() -> anyhow::Result<()> {
             let marked = shutdown_manager.mark_running_interrupted().await;
             info!(
                 in_flight,
-                marked,
-                "in-flight jobs did not finish in time; marked interrupted (resumable)"
+                marked, "in-flight jobs did not finish in time; marked interrupted (resumable)"
             );
         }
         info!("drain complete");
@@ -224,12 +229,34 @@ fn build_router(state: Arc<AppState>) -> axum::Router {
                 .delete(routes::jobs::delete_many),
         )
         .route("/jobs/upload", post(routes::jobs::upload))
-        .route("/jobs/:id", get(routes::jobs::get).delete(routes::jobs::delete))
+        .route(
+            "/jobs/:id",
+            get(routes::jobs::get).delete(routes::jobs::delete),
+        )
         .route("/jobs/:id/cancel", post(routes::jobs::cancel))
         .route("/jobs/:id/retry", post(routes::jobs::retry))
         .route("/jobs/:id/download", get(routes::jobs::download))
         .route("/jobs/:id/events", get(routes::jobs::events))
-        .route("/settings", get(routes::settings::get).put(routes::settings::put))
+        .route(
+            "/settings",
+            get(routes::settings::get).put(routes::settings::put),
+        )
+        .route("/settings/plex/connect", post(routes::plex::connect))
+        .route("/settings/plex/connect/:pin_id", get(routes::plex::poll))
+        .route("/settings/plex/servers", get(routes::plex::servers))
+        .route(
+            "/settings/plex/test",
+            post(routes::media_servers::test_plex),
+        )
+        .route("/settings/plex", delete(routes::media_servers::delete_plex))
+        .route(
+            "/settings/jellyfin/test",
+            post(routes::media_servers::test_jellyfin),
+        )
+        .route(
+            "/settings/jellyfin",
+            delete(routes::media_servers::delete_jellyfin),
+        )
         .with_state(state.clone());
 
     let mut router = axum::Router::new()
@@ -248,7 +275,8 @@ fn build_router(state: Arc<AppState>) -> axum::Router {
     let web_root = &state.config.web_root;
     if web_root.join("index.html").exists() {
         info!(root = %web_root.display(), "serving frontend");
-        let dir = ServeDir::new(web_root).not_found_service(ServeFile::new(web_root.join("index.html")));
+        let dir =
+            ServeDir::new(web_root).not_found_service(ServeFile::new(web_root.join("index.html")));
         router = router.fallback_service(dir);
     } else {
         warn!(root = %web_root.display(), "web root missing index.html; frontend not served");

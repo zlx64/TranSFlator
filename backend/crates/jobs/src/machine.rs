@@ -25,16 +25,16 @@ pub enum TransitionError {
 /// The complete set of legal transitions.
 pub fn can_transition(from: JobStatus, to: JobStatus) -> bool {
     match (from, to) {
-        (JobStatus::Queued, JobStatus::Running)
-        | (JobStatus::Queued, JobStatus::Canceled) => true,
+        (JobStatus::Queued, JobStatus::Running) | (JobStatus::Queued, JobStatus::Canceled) => true,
         (JobStatus::Running, JobStatus::Done)
         | (JobStatus::Running, JobStatus::Failed)
         | (JobStatus::Running, JobStatus::Canceled)
         | (JobStatus::Running, JobStatus::Interrupted) => true,
         // Retry: any terminal state back to queued (FR-18).
-        (JobStatus::Done | JobStatus::Failed | JobStatus::Canceled | JobStatus::Interrupted, JobStatus::Queued) => {
-            true
-        }
+        (
+            JobStatus::Done | JobStatus::Failed | JobStatus::Canceled | JobStatus::Interrupted,
+            JobStatus::Queued,
+        ) => true,
         _ => false,
     }
 }

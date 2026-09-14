@@ -179,7 +179,10 @@ pub fn search(
     let q = query.to_ascii_lowercase();
     let mut results = Vec::new();
 
-    for entry in walkdir::WalkDir::new(&abs).into_iter().filter_map(|e| e.ok()) {
+    for entry in walkdir::WalkDir::new(&abs)
+        .into_iter()
+        .filter_map(|e| e.ok())
+    {
         if !entry.file_type().is_file() {
             continue;
         }
@@ -191,10 +194,7 @@ pub fn search(
         if !name.to_ascii_lowercase().contains(&q) {
             continue;
         }
-        let rel = entry
-            .path()
-            .strip_prefix(&abs)
-            .unwrap_or(entry.path());
+        let rel = entry.path().strip_prefix(&abs).unwrap_or(entry.path());
         let size = entry.metadata().ok().map(|m| m.len());
         results.push(Entry {
             name,
@@ -303,7 +303,12 @@ mod tests {
     fn list_dir_hides_junk_by_default() {
         let (_dir, guard) = setup();
         let tree = list_dir(&guard, 0, "Show/Season 1", false).unwrap();
-        assert_eq!(tree.files.len(), 2, "expected 2 video files, got {:?}", tree.files);
+        assert_eq!(
+            tree.files.len(),
+            2,
+            "expected 2 video files, got {:?}",
+            tree.files
+        );
         assert!(tree.files.iter().all(|f| f.is_video));
         // notes.txt is in the parent, not here; folders empty.
         assert!(tree.folders.is_empty());
@@ -360,7 +365,10 @@ mod tests {
     fn percent_encode_query_encodes_reserved_and_utf8() {
         assert_eq!(percent_encode_query("a/b c&d"), "a%2Fb%20c%26d");
         assert_eq!(percent_encode_query("ok-_.~"), "ok-_.~");
-        assert_eq!(percent_encode_query("日本語"), "%E6%97%A5%E6%9C%AC%E8%AA%9E");
+        assert_eq!(
+            percent_encode_query("日本語"),
+            "%E6%97%A5%E6%9C%AC%E8%AA%9E"
+        );
     }
 
     #[test]
@@ -380,7 +388,9 @@ mod tests {
     #[test]
     fn thumbnail_url_is_unique_and_encoded() {
         let url = thumbnail_url(0, "Show/Season 1/E01 & bonus.mkv", 123, 1000, 160, 90, 1);
-        assert!(url.starts_with("/api/media/thumbnail?root=0&path=Show%2FSeason%201%2FE01%20%26%20bonus.mkv"));
+        assert!(url.starts_with(
+            "/api/media/thumbnail?root=0&path=Show%2FSeason%201%2FE01%20%26%20bonus.mkv"
+        ));
         assert!(url.contains("width=160"));
         assert!(url.contains("height=90"));
         assert!(url.contains("at=1"));

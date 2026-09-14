@@ -8,7 +8,9 @@
 pub mod events;
 pub mod machine;
 pub mod manager;
+pub mod media_server;
 pub mod model;
+pub mod plex_auth;
 pub mod runner;
 pub mod store;
 

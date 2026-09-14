@@ -65,10 +65,7 @@ impl JobRow {
             progress_pct: self.progress_pct,
             output_path: self.output_path.as_deref().map(PathBuf::from),
             project_file_path: self.project_file_path.as_deref().map(PathBuf::from),
-            external_subtitle_path: self
-                .external_subtitle_path
-                .as_deref()
-                .map(PathBuf::from),
+            external_subtitle_path: self.external_subtitle_path.as_deref().map(PathBuf::from),
             log_tail: self.log_tail,
             error_message: self.error_message,
             retry_mode: self.retry_mode,
@@ -109,7 +106,11 @@ impl JobStore {
         .bind(&new.target_language)
         .bind(&new.provider)
         .bind(&new.model)
-        .bind(new.external_subtitle_path.as_ref().map(|p| p.to_string_lossy().to_string()))
+        .bind(
+            new.external_subtitle_path
+                .as_ref()
+                .map(|p| p.to_string_lossy().to_string()),
+        )
         .bind(&new.movie_name)
         .bind(&new.description)
         .bind(&now)
@@ -124,7 +125,9 @@ impl JobStore {
             .bind(id)
             .fetch_optional(&self.pool)
             .await?;
-        row.map(|r| r.into_job()).transpose()?.ok_or_else(|| StoreError::NotFound(id.to_string()))
+        row.map(|r| r.into_job())
+            .transpose()?
+            .ok_or_else(|| StoreError::NotFound(id.to_string()))
     }
 
     /// List jobs, most recent first.
@@ -159,13 +162,15 @@ impl JobStore {
     pub async fn set_progress(&self, id: &str, pct: i32, output_path: Option<&str>) -> Result<()> {
         let now = Utc::now().to_rfc3339();
         if let Some(out) = output_path {
-            sqlx::query("UPDATE jobs SET progress_pct = ?, output_path = ?, updated_at = ? WHERE id = ?")
-                .bind(pct.clamp(0, 100))
-                .bind(out)
-                .bind(&now)
-                .bind(id)
-                .execute(&self.pool)
-                .await?;
+            sqlx::query(
+                "UPDATE jobs SET progress_pct = ?, output_path = ?, updated_at = ? WHERE id = ?",
+            )
+            .bind(pct.clamp(0, 100))
+            .bind(out)
+            .bind(&now)
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
         } else {
             sqlx::query("UPDATE jobs SET progress_pct = ?, updated_at = ? WHERE id = ?")
                 .bind(pct.clamp(0, 100))
@@ -254,11 +259,7 @@ impl JobStore {
         if statuses.is_empty() {
             return Ok(Vec::new());
         }
-        let placeholders = statuses
-            .iter()
-            .map(|_| "?")
-            .collect::<Vec<_>>()
-            .join(", ");
+        let placeholders = statuses.iter().map(|_| "?").collect::<Vec<_>>().join(", ");
         let sql = format!(
             "SELECT * FROM jobs WHERE status IN ({placeholders}) ORDER BY created_at DESC, id DESC"
         );
@@ -275,11 +276,7 @@ impl JobStore {
         if statuses.is_empty() {
             return Ok(0);
         }
-        let placeholders = statuses
-            .iter()
-            .map(|_| "?")
-            .collect::<Vec<_>>()
-            .join(", ");
+        let placeholders = statuses.iter().map(|_| "?").collect::<Vec<_>>().join(", ");
         let sql = format!("DELETE FROM jobs WHERE status IN ({placeholders})");
         let mut q = sqlx::query(&sql);
         for s in statuses {
@@ -301,7 +298,10 @@ impl JobStore {
             sqlx::query("SELECT id FROM jobs WHERE status = 'running'")
                 .fetch_all(&self.pool)
                 .await?;
-        let ids: Vec<String> = rows.iter().map(|r| r.try_get::<String, _>(0).unwrap_or_default()).collect();
+        let ids: Vec<String> = rows
+            .iter()
+            .map(|r| r.try_get::<String, _>(0).unwrap_or_default())
+            .collect();
         for id in &ids {
             self.update_status_raw(id, JobStatus::Interrupted).await?;
         }
@@ -363,8 +363,7 @@ mod tests {
     async fn external_subtitle_path_roundtrips() {
         let store = JobStore::new(pool().await);
         let mut new = new_job();
-        new.external_subtitle_path =
-            Some(std::path::PathBuf::from("C:\\data\\uploads\\abc.srt"));
+        new.external_subtitle_path = Some(std::path::PathBuf::from("C:\\data\\uploads\\abc.srt"));
         let job = store.create(&new).await.unwrap();
         assert_eq!(
             job.external_subtitle_path.as_deref(),
@@ -437,7 +436,10 @@ mod tests {
             .unwrap();
         let got = store.get(&job.id).await.unwrap();
         assert_eq!(got.progress_pct, 100);
-        assert_eq!(got.output_path.as_deref(), Some(std::path::Path::new("C:\\media\\E01.de.srt")));
+        assert_eq!(
+            got.output_path.as_deref(),
+            Some(std::path::Path::new("C:\\media\\E01.de.srt"))
+        );
     }
 
     #[tokio::test]
@@ -447,14 +449,29 @@ mod tests {
         // 200 lines × ~80 bytes ≈ 16KB, forces truncation.
         for i in 0..200 {
             store
-                .append_log(&job.id, &format!("INFO: Translated batch 2.{i}: 90/240 lines (37%) padding-padding-padding"))
+                .append_log(
+                    &job.id,
+                    &format!(
+                        "INFO: Translated batch 2.{i}: 90/240 lines (37%) padding-padding-padding"
+                    ),
+                )
                 .await
                 .unwrap();
         }
         let tail = store.get(&job.id).await.unwrap().log_tail;
-        assert!(tail.len() <= LOG_TAIL_MAX + 128, "tail should be bounded, got {}", tail.len());
-        assert!(tail.contains("batch 2.199"), "tail must contain the last line");
-        assert!(!tail.starts_with("batch 2.0"), "oldest lines must be dropped");
+        assert!(
+            tail.len() <= LOG_TAIL_MAX + 128,
+            "tail should be bounded, got {}",
+            tail.len()
+        );
+        assert!(
+            tail.contains("batch 2.199"),
+            "tail must contain the last line"
+        );
+        assert!(
+            !tail.starts_with("batch 2.0"),
+            "oldest lines must be dropped"
+        );
     }
 
     #[tokio::test]
@@ -466,10 +483,17 @@ mod tests {
         let job = store.create(&new_job()).await.unwrap();
         let line = "перекладено субтитрів перевірка тексту українською мовою";
         for i in 0..500 {
-            store.append_log(&job.id, &format!("{line} #{i}")).await.unwrap();
+            store
+                .append_log(&job.id, &format!("{line} #{i}"))
+                .await
+                .unwrap();
         }
         let tail = store.get(&job.id).await.unwrap().log_tail;
-        assert!(tail.len() <= LOG_TAIL_MAX + 8, "tail should be bounded, got {}", tail.len());
+        assert!(
+            tail.len() <= LOG_TAIL_MAX + 8,
+            "tail should be bounded, got {}",
+            tail.len()
+        );
         assert!(tail.contains("#499"), "tail must contain the last line");
     }
 
@@ -482,10 +506,16 @@ mod tests {
 
         let interrupted = store.recover_interrupted().await.unwrap();
         assert_eq!(interrupted, vec![a.id.clone()]);
-        assert_eq!(store.get(&a.id).await.unwrap().status, JobStatus::Interrupted);
+        assert_eq!(
+            store.get(&a.id).await.unwrap().status,
+            JobStatus::Interrupted
+        );
 
         let pending = store.pending_queued().await.unwrap();
-        assert_eq!(pending.iter().map(|j| j.id.clone()).collect::<Vec<_>>(), vec![b.id.clone()]);
+        assert_eq!(
+            pending.iter().map(|j| j.id.clone()).collect::<Vec<_>>(),
+            vec![b.id.clone()]
+        );
     }
 
     #[tokio::test]
@@ -531,18 +561,12 @@ mod tests {
             .await
             .unwrap();
 
-        let matching = store
-            .list_by_status(&[JobStatus::Failed])
-            .await
-            .unwrap();
+        let matching = store.list_by_status(&[JobStatus::Failed]).await.unwrap();
         assert_eq!(matching.len(), 1);
         assert_eq!(matching[0].id, failed.id);
 
         assert_eq!(
-            store
-                .delete_by_status(&[JobStatus::Failed])
-                .await
-                .unwrap(),
+            store.delete_by_status(&[JobStatus::Failed]).await.unwrap(),
             1
         );
         assert!(matches!(

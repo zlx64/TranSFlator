@@ -74,9 +74,6 @@ export default function Layout({ children }: { children: ReactNode }) {
             {theme === "dark" ? "Light mode" : "Dark mode"}
           </button>
         </div>
-        <div className="hidden px-4 py-3 text-xs text-muted md:block">
-          self-hosted
-        </div>
       </aside>
       <main className="flex-1 overflow-y-auto">
         <div className="mx-auto max-w-5xl px-4 py-4 md:px-6 md:py-6">

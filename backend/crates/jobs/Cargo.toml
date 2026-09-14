@@ -17,9 +17,11 @@ tracing.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true
 futures-util.workspace = true
+reqwest.workspace = true
 transflator-config.workspace = true
 transflator-media.workspace = true
 transflator-translate.workspace = true
 
 [dev-dependencies]
+axum.workspace = true
 tempfile = "3"

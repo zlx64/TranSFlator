@@ -59,12 +59,11 @@ pub async fn tree(
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let guard = state.guard.clone();
     let path = q.path.clone();
-    let tree = tokio::task::spawn_blocking(move || {
-        lib::list_dir(&guard, q.root, &path, q.show_all)
-    })
-    .await
-    .map_err(|e| ApiError::internal(e.to_string()))?
-    .map_err(|e| ApiError::from_media(&e))?;
+    let tree =
+        tokio::task::spawn_blocking(move || lib::list_dir(&guard, q.root, &path, q.show_all))
+            .await
+            .map_err(|e| ApiError::internal(e.to_string()))?
+            .map_err(|e| ApiError::from_media(&e))?;
 
     let files = enrich(tree.files, &state.guard, &state.pool, q.root).await;
 
@@ -83,12 +82,11 @@ pub async fn search(
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let guard = state.guard.clone();
     let query = q.q.clone();
-    let results = tokio::task::spawn_blocking(move || {
-        lib::search(&guard, q.root, &query, q.show_all)
-    })
-    .await
-    .map_err(|e| ApiError::internal(e.to_string()))?
-    .map_err(|e| ApiError::from_media(&e))?;
+    let results =
+        tokio::task::spawn_blocking(move || lib::search(&guard, q.root, &query, q.show_all))
+            .await
+            .map_err(|e| ApiError::internal(e.to_string()))?
+            .map_err(|e| ApiError::from_media(&e))?;
 
     let results = enrich(results, &state.guard, &state.pool, q.root).await;
 
@@ -142,7 +140,12 @@ async fn enrich(
 
     let cache = MediaCache::new(pool);
     let metas = cache
-        .get_many(&keys.iter().map(|k| (k.1.clone(), k.2, k.3)).collect::<Vec<_>>())
+        .get_many(
+            &keys
+                .iter()
+                .map(|k| (k.1.clone(), k.2, k.3))
+                .collect::<Vec<_>>(),
+        )
         .await;
 
     let by_rel: HashMap<String, CachedMeta> = keys

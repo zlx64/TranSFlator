@@ -38,8 +38,7 @@ impl Secrets {
     }
 
     fn cipher(&self) -> Result<Aes256Gcm, SecretError> {
-        Aes256Gcm::new_from_slice(&self.key)
-            .map_err(|e| SecretError::Crypto(e.to_string()))
+        Aes256Gcm::new_from_slice(&self.key).map_err(|e| SecretError::Crypto(e.to_string()))
     }
 
     /// Encrypt a plaintext secret, returning a base64 string.
@@ -81,7 +80,14 @@ impl Secrets {
             return "****".to_string();
         }
         let head: String = b.iter().take(4).collect();
-        let tail: String = b.iter().rev().take(4).collect::<Vec<_>>().into_iter().rev().collect();
+        let tail: String = b
+            .iter()
+            .rev()
+            .take(4)
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+            .collect();
         format!("{head}…{tail}")
     }
 }
@@ -113,7 +119,9 @@ mod tests {
         let s = Secrets::from_app_secret("secret");
         let enc = s.encrypt("hello world").unwrap();
         // Flip a byte in the middle (ciphertext region).
-        let mut bytes = base64::engine::general_purpose::STANDARD.decode(&enc).unwrap();
+        let mut bytes = base64::engine::general_purpose::STANDARD
+            .decode(&enc)
+            .unwrap();
         let idx = bytes.len() / 2;
         bytes[idx] ^= 0xff;
         let tampered = base64::engine::general_purpose::STANDARD.encode(&bytes);

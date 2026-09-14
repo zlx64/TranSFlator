@@ -71,16 +71,16 @@ pub async fn streams(
     let meta = match std::fs::metadata(&resolved) {
         Ok(m) => m,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            return Err(ApiError::from_media(&MediaError::NotFound(
-                display(&resolved),
-            )))
+            return Err(ApiError::from_media(&MediaError::NotFound(display(
+                &resolved,
+            ))))
         }
         Err(e) => return Err(ApiError::from_media(&MediaError::Io(e))),
     };
     if !meta.is_file() {
-        return Err(ApiError::from_media(&MediaError::NotADirectory(
-            display(&resolved),
-        )));
+        return Err(ApiError::from_media(&MediaError::NotADirectory(display(
+            &resolved,
+        ))));
     }
     let size = meta.len();
     let mtime = mtime_secs(&meta);
@@ -99,17 +99,11 @@ pub async fn streams(
         }
         None => {
             tracing::info!(path = %resolved.display(), "probing media file");
-            let probe = Ffprobe::new(
-                &state.config.ffprobe_bin,
-                state.config.ffprobe_timeout_secs,
-            );
-            let probed = probe
-                .probe(&resolved)
-                .await
-                .map_err(|e| {
-                    tracing::error!(path = %resolved.display(), error = %e, "media probe failed");
-                    ApiError::from_media(&e)
-                })?;
+            let probe = Ffprobe::new(&state.config.ffprobe_bin, state.config.ffprobe_timeout_secs);
+            let probed = probe.probe(&resolved).await.map_err(|e| {
+                tracing::error!(path = %resolved.display(), error = %e, "media probe failed");
+                ApiError::from_media(&e)
+            })?;
             tracing::info!(
                 path = %resolved.display(),
                 subtitles = probed.subtitle_count,
@@ -159,9 +153,9 @@ pub async fn serve_file(
         .await
         .map_err(|e| ApiError::from_media(&MediaError::Io(e)))?;
     if !meta.is_file() {
-        return Err(ApiError::from_media(&MediaError::NotFound(
-            display(&resolved),
-        )));
+        return Err(ApiError::from_media(&MediaError::NotFound(display(
+            &resolved,
+        ))));
     }
     let size = meta.len();
     if size > FILE_MAX_BYTES {
@@ -254,9 +248,9 @@ pub async fn thumbnail(
         .await
         .map_err(|e| ApiError::from_media(&MediaError::Io(e)))?;
     if !meta.is_file() {
-        return Err(ApiError::from_media(&MediaError::NotFound(
-            display(&resolved),
-        )));
+        return Err(ApiError::from_media(&MediaError::NotFound(display(
+            &resolved,
+        ))));
     }
     let name = resolved
         .file_name()
@@ -295,14 +289,24 @@ pub async fn thumbnail(
                 at,
                 "generating thumbnail"
             );
-            generate_thumbnail(&state, &resolved, &cache_dir, &cache_path, &q.sig, width, height, at)
-                .await?
+            generate_thumbnail(
+                &state,
+                &resolved,
+                &cache_dir,
+                &cache_path,
+                &q.sig,
+                width,
+                height,
+                at,
+            )
+            .await?
         }
     };
 
     Ok(jpeg_response(bytes))
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn generate_thumbnail(
     state: &AppState,
     input: &std::path::Path,

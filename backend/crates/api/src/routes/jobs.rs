@@ -130,7 +130,10 @@ pub async fn create(
         .create_job(&new)
         .await
         .map_err(|e| ApiError::from_manager(&e))?;
-    Ok((StatusCode::CREATED, Json(serde_json::json!({ "job": job_json(&job) }))))
+    Ok((
+        StatusCode::CREATED,
+        Json(serde_json::json!({ "job": job_json(&job) })),
+    ))
 }
 
 /// `POST /api/jobs/upload` (§6.1): create a job from an uploaded external
@@ -161,16 +164,13 @@ pub async fn upload(
         let name = field.name().unwrap_or("").to_string();
         match name.as_str() {
             "file" => {
-                let filename = field
-                    .file_name()
-                    .map(|s| s.to_string())
-                    .unwrap_or_default();
+                let filename = field.file_name().map(|s| s.to_string()).unwrap_or_default();
                 // Stream with a byte cap (axum 0.7 has no Multipart::limit).
                 let mut bytes: Vec<u8> = Vec::new();
                 let mut stream = field;
                 while let Some(chunk) = stream.next().await {
-                    let chunk =
-                        chunk.map_err(|e| ApiError::bad_request(format!("invalid upload file: {e}")))?;
+                    let chunk = chunk
+                        .map_err(|e| ApiError::bad_request(format!("invalid upload file: {e}")))?;
                     bytes.extend_from_slice(&chunk);
                     if bytes.len() > UPLOAD_MAX_BYTES as usize {
                         return Err(ApiError::bad_request(
@@ -248,8 +248,7 @@ pub async fn upload(
         }
     }
 
-    let (filename, bytes) =
-        file.ok_or_else(|| ApiError::bad_request("missing file field"))?;
+    let (filename, bytes) = file.ok_or_else(|| ApiError::bad_request("missing file field"))?;
     let ext = std::path::Path::new(&filename)
         .extension()
         .and_then(|e| e.to_str())
@@ -525,10 +524,21 @@ async fn handle_job_events(state: Arc<AppState>, id: String, mut socket: WebSock
     };
 
     // Snapshot: current status + progress (if any).
-    let _ = send_event(&mut socket, &JobEvent::Status { status: job.status.as_str().into() })
-        .await;
+    let _ = send_event(
+        &mut socket,
+        &JobEvent::Status {
+            status: job.status.as_str().into(),
+        },
+    )
+    .await;
     if job.progress_pct > 0 {
-        let _ = send_event(&mut socket, &JobEvent::Progress { pct: job.progress_pct }).await;
+        let _ = send_event(
+            &mut socket,
+            &JobEvent::Progress {
+                pct: job.progress_pct,
+            },
+        )
+        .await;
     }
 
     // If the job is already finished, send the terminal frame and close.

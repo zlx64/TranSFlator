@@ -39,11 +39,7 @@ impl ApiError {
     }
 
     pub fn internal(msg: impl Into<String>) -> Self {
-        Self::new(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "internal",
-            msg,
-        )
+        Self::new(StatusCode::INTERNAL_SERVER_ERROR, "internal", msg)
     }
 
     /// Map a database/settings error (anyhow) to a 500 with a redacted message.
@@ -58,9 +54,7 @@ impl ApiError {
             MediaError::Traversal => Self::forbidden("path traversal blocked"),
             MediaError::NotFound(p) => Self::not_found(format!("not found: {p}")),
             MediaError::NotADirectory(p) => Self::bad_request(format!("not a directory: {p}")),
-            MediaError::PermissionDenied(p) => {
-                Self::forbidden(format!("permission denied: {p}"))
-            }
+            MediaError::PermissionDenied(p) => Self::forbidden(format!("permission denied: {p}")),
             MediaError::NoSubtitles(p) => Self::bad_request(format!("no subtitle tracks in {p}")),
             MediaError::ImageOnly(p) => {
                 Self::bad_request(format!("image-only subtitle tracks (OCR required): {p}"))
@@ -69,7 +63,9 @@ impl ApiError {
                 Self::bad_request(format!("unsupported subtitle codec: {c}"))
             }
             MediaError::Ffprobe(m) => Self::internal(format!("ffprobe failed: {m}")),
-            MediaError::FfprobeTimeout(s) => Self::internal(format!("ffprobe timed out after {s}s")),
+            MediaError::FfprobeTimeout(s) => {
+                Self::internal(format!("ffprobe timed out after {s}s"))
+            }
             MediaError::Ffmpeg(m) => Self::internal(format!("ffmpeg failed: {m}")),
             MediaError::FfmpegTimeout(s) => Self::internal(format!("ffmpeg timed out after {s}s")),
             MediaError::Encoding(m) => Self::internal(format!("encoding error: {m}")),
@@ -83,9 +79,9 @@ impl ApiError {
         match e {
             ManagerError::NotFound(id) => Self::not_found(format!("job not found: {id}")),
             ManagerError::Invalid(msg) => Self::bad_request(msg),
-            ManagerError::MissingApiKey(p) => {
-                Self::bad_request(format!("provider {p} requires an API key — set it in Settings first"))
-            }
+            ManagerError::MissingApiKey(p) => Self::bad_request(format!(
+                "provider {p} requires an API key — set it in Settings first"
+            )),
             ManagerError::Store(inner) => match inner {
                 transflator_jobs::StoreError::NotFound(id) => {
                     Self::not_found(format!("job not found: {id}"))

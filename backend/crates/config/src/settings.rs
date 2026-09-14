@@ -30,6 +30,18 @@ pub mod keys {
     pub const CUSTOM_MODELS_URL: &str = "custom_models_url";
     /// Whether the custom endpoint uses chat-format requests.
     pub const CUSTOM_CHAT: &str = "custom_chat";
+    /// Plex Media Server address used for post-job library refresh.
+    pub const PLEX_SERVER_URL: &str = "plex_server_url";
+    /// Secret: Plex Media Server token used for post-job library refresh.
+    pub const PLEX_TOKEN: &str = "plex_token";
+    /// Stable device identifier used for Plex PIN authentication.
+    pub const PLEX_CLIENT_IDENTIFIER: &str = "plex_client_identifier";
+    /// RFC 3339 timestamp of the last Plex TV keep-alive ping.
+    pub const PLEX_LAST_PING: &str = "plex_last_ping";
+    /// Jellyfin server address used for post-job library refresh.
+    pub const JELLYFIN_SERVER_URL: &str = "jellyfin_server_url";
+    /// Secret: Jellyfin API key used for post-job library refresh.
+    pub const JELLYFIN_TOKEN: &str = "jellyfin_token";
 }
 
 /// The settings key for a provider's API key, e.g. `api_key.openai`.
@@ -71,12 +83,14 @@ impl<'a> SettingsStore<'a> {
 
     /// Set a non-secret setting value.
     pub async fn set(&self, key: &str, value: &str) -> anyhow::Result<()> {
-        sqlx::query("INSERT INTO settings (key, value, is_secret) VALUES (?, ?, 0) \
-                     ON CONFLICT(key) DO UPDATE SET value = excluded.value, is_secret = 0")
-            .bind(key)
-            .bind(value)
-            .execute(self.pool)
-            .await?;
+        sqlx::query(
+            "INSERT INTO settings (key, value, is_secret) VALUES (?, ?, 0) \
+                     ON CONFLICT(key) DO UPDATE SET value = excluded.value, is_secret = 0",
+        )
+        .bind(key)
+        .bind(value)
+        .execute(self.pool)
+        .await?;
         Ok(())
     }
 
@@ -95,12 +109,14 @@ impl<'a> SettingsStore<'a> {
     /// Set a secret setting value (encrypted at rest).
     pub async fn set_secret(&self, key: &str, value: &str) -> anyhow::Result<()> {
         let enc = self.secrets.encrypt(value)?;
-        sqlx::query("INSERT INTO settings (key, value, is_secret) VALUES (?, ?, 1) \
-                     ON CONFLICT(key) DO UPDATE SET value = excluded.value, is_secret = 1")
-            .bind(key)
-            .bind(&enc)
-            .execute(self.pool)
-            .await?;
+        sqlx::query(
+            "INSERT INTO settings (key, value, is_secret) VALUES (?, ?, 1) \
+                     ON CONFLICT(key) DO UPDATE SET value = excluded.value, is_secret = 1",
+        )
+        .bind(key)
+        .bind(&enc)
+        .execute(self.pool)
+        .await?;
         Ok(())
     }
 
@@ -155,9 +171,7 @@ impl<'a> SettingsStore<'a> {
 
     /// List all setting keys with a flag indicating whether each is a secret.
     /// Secret values are never returned here (only their masked form, if any).
-    pub async fn list(
-        &self,
-    ) -> anyhow::Result<Vec<(String, bool, Option<String>)>> {
+    pub async fn list(&self) -> anyhow::Result<Vec<(String, bool, Option<String>)>> {
         let rows = sqlx::query("SELECT key, is_secret, value FROM settings ORDER BY key")
             .fetch_all(self.pool)
             .await?;
@@ -167,10 +181,7 @@ impl<'a> SettingsStore<'a> {
             let is_secret: i64 = r.try_get(1)?;
             let value: String = r.try_get(2)?;
             let masked = if is_secret == 1 {
-                self.secrets
-                    .decrypt(&value)
-                    .ok()
-                    .map(|v| Secrets::mask(&v))
+                self.secrets.decrypt(&value).ok().map(|v| Secrets::mask(&v))
             } else {
                 Some(value)
             };
@@ -235,11 +246,20 @@ mod tests {
         let p = pool().await;
         let secrets = Secrets::from_app_secret("test");
         let store = SettingsStore::new(&p, &secrets);
-        store.set(keys::DEFAULT_TARGET_LANGUAGE, "日本語").await.unwrap();
-        store.set(keys::OUTPUT_PATTERN, "{name}_sub.srt").await.unwrap();
+        store
+            .set(keys::DEFAULT_TARGET_LANGUAGE, "日本語")
+            .await
+            .unwrap();
+        store
+            .set(keys::OUTPUT_PATTERN, "{name}_sub.srt")
+            .await
+            .unwrap();
         store.set(keys::OVERWRITE_BEHAVIOR, "skip").await.unwrap();
         store.set(keys::CONCURRENCY, "7").await.unwrap();
-        store.set_secret(keys::AUTH_TOKEN, "stored-token").await.unwrap();
+        store
+            .set_secret(keys::AUTH_TOKEN, "stored-token")
+            .await
+            .unwrap();
         let cfg = config();
         let eff = store.effective(&cfg).await.unwrap();
         assert_eq!(eff.default_target_language, "日本語");

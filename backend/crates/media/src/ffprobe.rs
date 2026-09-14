@@ -67,10 +67,17 @@ impl Ffprobe {
     /// Probe a media file and return parsed stream information.
     pub async fn probe(&self, path: &Path) -> Result<MediaInfo, MediaError> {
         let mut cmd = Command::new(&self.bin);
-        cmd.args(["-v", "error", "-print_format", "json", "-show_streams", "-show_format"])
-            .arg(path)
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped());
+        cmd.args([
+            "-v",
+            "error",
+            "-print_format",
+            "json",
+            "-show_streams",
+            "-show_format",
+        ])
+        .arg(path)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
 
         let output = match tokio::time::timeout(self.timeout, cmd.output()).await {
             Ok(result) => result.map_err(|e| {
@@ -132,8 +139,16 @@ impl Ffprobe {
                 .cloned()
                 .filter(|l| !l.is_empty() && l != "und");
             let title = tags.and_then(|t| t.get("title")).cloned();
-            let default = s.disposition.as_ref().map(|d| d.default != 0).unwrap_or(false);
-            let forced = s.disposition.as_ref().map(|d| d.forced != 0).unwrap_or(false);
+            let default = s
+                .disposition
+                .as_ref()
+                .map(|d| d.default != 0)
+                .unwrap_or(false);
+            let forced = s
+                .disposition
+                .as_ref()
+                .map(|d| d.forced != 0)
+                .unwrap_or(false);
             let subtitle_kind = if kind == StreamKind::Subtitle {
                 classify_subtitle_codec(&codec)
             } else {
@@ -213,17 +228,11 @@ mod tests {
         assert_eq!(s2.language.as_deref(), Some("jpn"));
         assert!(s2.default);
         assert!(!s2.forced);
-        assert_eq!(
-            s2.subtitle_kind,
-            Some(crate::model::SubtitleKind::Text)
-        );
+        assert_eq!(s2.subtitle_kind, Some(crate::model::SubtitleKind::Text));
 
         let s3 = &info.streams[3];
         assert!(s3.forced);
-        assert_eq!(
-            s3.subtitle_kind,
-            Some(crate::model::SubtitleKind::Image)
-        );
+        assert_eq!(s3.subtitle_kind, Some(crate::model::SubtitleKind::Image));
     }
 
     #[test]
@@ -240,12 +249,7 @@ mod tests {
     #[tokio::test]
     async fn probe_nonzero_exit_reports_code_and_stderr() {
         let dir = tempfile::tempdir().unwrap();
-        let bin = crate::stubs::failing_tool(
-            dir.path(),
-            "ffprobe",
-            "No such file or directory",
-            1,
-        );
+        let bin = crate::stubs::failing_tool(dir.path(), "ffprobe", "No such file or directory", 1);
         let input = dir.path().join("x.mkv");
         std::fs::write(&input, b"x").unwrap();
         let probe = Ffprobe::new(bin.to_str().unwrap(), 10);

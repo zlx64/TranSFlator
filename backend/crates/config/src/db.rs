@@ -83,11 +83,10 @@ pub async fn migrate(pool: &SqlitePool) -> anyhow::Result<()> {
 /// Add columns that were introduced after the initial release.
 async fn migrate_columns(pool: &SqlitePool) -> anyhow::Result<()> {
     // jobs.retry_mode (Phase 5, FR-18).
-    let (count,): (i64,) = sqlx::query_as(
-        "SELECT COUNT(*) FROM pragma_table_info('jobs') WHERE name = 'retry_mode'",
-    )
-    .fetch_one(pool)
-    .await?;
+    let (count,): (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM pragma_table_info('jobs') WHERE name = 'retry_mode'")
+            .fetch_one(pool)
+            .await?;
     if count == 0 {
         sqlx::query("ALTER TABLE jobs ADD COLUMN retry_mode TEXT NOT NULL DEFAULT 'rerun'")
             .execute(pool)
@@ -108,12 +107,11 @@ async fn migrate_columns(pool: &SqlitePool) -> anyhow::Result<()> {
     // jobs.movie_name / jobs.description (FR-10 context fields, §13): optional
     // show-name/description passed to llm-subtrans as --moviename/--description.
     for col in ["movie_name", "description"] {
-        let (count,): (i64,) = sqlx::query_as(
-            "SELECT COUNT(*) FROM pragma_table_info('jobs') WHERE name = ?",
-        )
-        .bind(col)
-        .fetch_one(pool)
-        .await?;
+        let (count,): (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM pragma_table_info('jobs') WHERE name = ?")
+                .bind(col)
+                .fetch_one(pool)
+                .await?;
         if count == 0 {
             let sql = format!("ALTER TABLE jobs ADD COLUMN {col} TEXT");
             sqlx::query(&sql).execute(pool).await?;

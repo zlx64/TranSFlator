@@ -206,9 +206,18 @@ mod tests {
 
     #[test]
     fn overwrite_behavior_parses() {
-        assert_eq!(OverwriteBehavior::parse("overwrite"), Some(OverwriteBehavior::Overwrite));
-        assert_eq!(OverwriteBehavior::parse("Suffix"), Some(OverwriteBehavior::Suffix));
-        assert_eq!(OverwriteBehavior::parse("skip"), Some(OverwriteBehavior::Skip));
+        assert_eq!(
+            OverwriteBehavior::parse("overwrite"),
+            Some(OverwriteBehavior::Overwrite)
+        );
+        assert_eq!(
+            OverwriteBehavior::parse("Suffix"),
+            Some(OverwriteBehavior::Suffix)
+        );
+        assert_eq!(
+            OverwriteBehavior::parse("skip"),
+            Some(OverwriteBehavior::Skip)
+        );
         assert_eq!(OverwriteBehavior::parse("bogus"), None);
     }
 }

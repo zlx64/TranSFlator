@@ -76,7 +76,11 @@ impl PipelineRunner {
 
     /// Resolve the output path per the effective `output_pattern` + overwrite
     /// behavior (§6.8). Reads the stored settings (UI values override env).
-    async fn resolve_output(&self, source: &Path, target_language: &str) -> Result<PathBuf, RunError> {
+    async fn resolve_output(
+        &self,
+        source: &Path,
+        target_language: &str,
+    ) -> Result<PathBuf, RunError> {
         let settings = SettingsStore::new(&self.pool, &self.secrets);
         let eff = settings
             .effective(&self.config)
@@ -245,15 +249,15 @@ impl JobRunner for PipelineRunner {
                 // 3. Pick the subtitle stream.
                 let stream_index = match job.subtitle_stream_index {
                     Some(idx) => {
-                        let stream = info
-                            .streams
-                            .iter()
-                            .find(|s| s.index == idx)
-                            .ok_or_else(|| {
-                                RunError::Failed(format!(
-                                    "subtitle stream #{idx} not found in file"
-                                ))
-                            })?;
+                        let stream =
+                            info.streams
+                                .iter()
+                                .find(|s| s.index == idx)
+                                .ok_or_else(|| {
+                                    RunError::Failed(format!(
+                                        "subtitle stream #{idx} not found in file"
+                                    ))
+                                })?;
                         if stream.kind != StreamKind::Subtitle {
                             return Err(RunError::Failed(format!(
                                 "stream #{idx} is not a subtitle stream"
@@ -279,9 +283,7 @@ impl JobRunner for PipelineRunner {
                             ))
                         }
                         Selection::None => {
-                            return Err(RunError::Failed(
-                                "no subtitle tracks in file".into(),
-                            ))
+                            return Err(RunError::Failed("no subtitle tracks in file".into()))
                         }
                     },
                 };
@@ -289,7 +291,10 @@ impl JobRunner for PipelineRunner {
                     line: format!("extracting subtitle stream #{stream_index}"),
                 });
                 store
-                    .append_log(&job.id, &format!("extracting subtitle stream #{stream_index}"))
+                    .append_log(
+                        &job.id,
+                        &format!("extracting subtitle stream #{stream_index}"),
+                    )
                     .await
                     .ok();
                 tracing::info!(job = %job.id, stream = stream_index, "extracting subtitle stream");
@@ -301,33 +306,30 @@ impl JobRunner for PipelineRunner {
                     .map_err(|e| RunError::Failed(format!("cannot create extracted dir: {e}")))?;
                 ensure_space(&self.extracted_dir(), MIN_FREE_BYTES)
                     .map_err(|e| RunError::Failed(format!("disk space check failed: {e}")))?;
-                let ffmpeg =
-                    Ffmpeg::new(&self.config.ffmpeg_bin, self.config.ffmpeg_timeout_secs);
+                let ffmpeg = Ffmpeg::new(&self.config.ffmpeg_bin, self.config.ffmpeg_timeout_secs);
                 let streams: Vec<transflator_media::model::Stream> = info.streams;
                 let stream = streams
                     .iter()
                     .find(|s| s.index == stream_index)
                     .expect("stream index verified above");
-                ffmpeg.extract_subtitle(
-                    &job.source_path,
-                    &streams,
-                    stream.index,
-                    &extracted,
-                )
-                .await
-                .map_err(|e| RunError::Failed(format!("extraction failed: {e}")))?
+                ffmpeg
+                    .extract_subtitle(&job.source_path, &streams, stream.index, &extracted)
+                    .await
+                    .map_err(|e| RunError::Failed(format!("extraction failed: {e}")))?
             };
 
             // 5. Normalize to UTF-8 in place.
             match normalize_file_in_place(&input) {
                 Ok(n) if !n.was_utf8 => {
-                    let msg = format!("normalized encoding to UTF-8");
+                    let msg = "normalized encoding to UTF-8".to_string();
                     emit(JobEvent::Log { line: msg.clone() });
                     store.append_log(&job.id, &msg).await.ok();
                 }
                 Ok(_) => {}
                 Err(e) => {
-                    return Err(RunError::Failed(format!("encoding normalization failed: {e}")))
+                    return Err(RunError::Failed(format!(
+                        "encoding normalization failed: {e}"
+                    )))
                 }
             }
 
@@ -337,19 +339,18 @@ impl JobRunner for PipelineRunner {
                 .await?;
 
             // 7. Build the llm-subtrans command (fail fast on missing key).
-            let provider = Provider::parse(&job.provider).ok_or_else(|| {
-                RunError::Failed(format!("unknown provider: {}", job.provider))
-            })?;
+            let provider = Provider::parse(&job.provider)
+                .ok_or_else(|| RunError::Failed(format!("unknown provider: {}", job.provider)))?;
             let api_key = self.resolve_api_key(provider).await?;
-            let mut opts = TranslateOptions::default();
-            opts.target_language = job.target_language.clone();
-            opts.model = job.model.clone();
-            opts.api_key = api_key;
-            opts.output = Some(output.clone());
-            opts.project = true;
-            // Optional context (FR-10, §13): show name / description.
-            opts.movie_name = job.movie_name.clone();
-            opts.description = job.description.clone();
+            let mut opts = TranslateOptions {
+                target_language: job.target_language.clone(),
+                model: job.model.clone(),
+                api_key,
+                output: Some(output.clone()),
+                movie_name: job.movie_name.clone(),
+                description: job.description.clone(),
+                ..TranslateOptions::default()
+            };
             // Custom OpenAI-compatible endpoint settings (§11).
             if provider == Provider::Custom {
                 let settings = SettingsStore::new(&self.pool, &self.secrets);
@@ -378,7 +379,13 @@ impl JobRunner for PipelineRunner {
                     .map_err(|e| RunError::Failed(format!("settings read failed: {e}")))?
                     .map(|s| s.trim() != "false")
                     .unwrap_or(true);
-                if opts.model.as_deref().map(str::trim).unwrap_or("").is_empty() {
+                if opts
+                    .model
+                    .as_deref()
+                    .map(str::trim)
+                    .unwrap_or("")
+                    .is_empty()
+                {
                     opts.model = settings
                         .get(keys::CUSTOM_MODEL)
                         .await
@@ -401,7 +408,8 @@ impl JobRunner for PipelineRunner {
                 let start_msg = if attempt == 1 {
                     format!(
                         "starting {} (target: {})",
-                        provider.as_str(), job.target_language
+                        provider.as_str(),
+                        job.target_language
                     )
                 } else {
                     format!(
@@ -409,7 +417,9 @@ impl JobRunner for PipelineRunner {
                         provider.as_str()
                     )
                 };
-                emit(JobEvent::Log { line: start_msg.clone() });
+                emit(JobEvent::Log {
+                    line: start_msg.clone(),
+                });
                 store.append_log(&job.id, &start_msg).await.ok();
                 tracing::info!(
                     job = %job.id,
@@ -480,9 +490,10 @@ impl JobRunner for PipelineRunner {
                 let class = classify_failure(code, &tail);
                 if class == FailureClass::Transient && attempt < MAX_ATTEMPTS {
                     let backoff = std::time::Duration::from_secs(2u64.pow(attempt));
-                    let wait_msg =
-                        format!("transient error — retrying in {}s", backoff.as_secs());
-                    emit(JobEvent::Log { line: wait_msg.clone() });
+                    let wait_msg = format!("transient error — retrying in {}s", backoff.as_secs());
+                    emit(JobEvent::Log {
+                        line: wait_msg.clone(),
+                    });
                     store.append_log(&job.id, &wait_msg).await.ok();
                     tracing::warn!(
                         job = %job.id,
@@ -514,7 +525,10 @@ impl JobRunner for PipelineRunner {
 
             // 9. Success: verify the output, record the project file.
             if !output.exists() {
-                let msg = format!("llm-subtrans finished but output is missing: {}", output.display());
+                let msg = format!(
+                    "llm-subtrans finished but output is missing: {}",
+                    output.display()
+                );
                 store.set_error(&job.id, &msg).await.ok();
                 return Err(RunError::Failed(msg));
             }
@@ -570,7 +584,9 @@ impl JobRunner for FakeRunner {
         Box::pin(async move {
             let _ = events.send(JobEventEnvelope::new(
                 job.id.clone(),
-                JobEvent::Log { line: "fake: started".into() },
+                JobEvent::Log {
+                    line: "fake: started".into(),
+                },
             ));
             if hang {
                 cancel.cancelled().await;
@@ -645,13 +661,8 @@ mod tests {
         let source = dir.path().join("E01.mkv");
         std::fs::write(&source, b"x").unwrap();
         std::fs::write(dir.path().join("E01.de.srt"), b"old").unwrap();
-        let err = resolve_output_path(
-            "{name}.{lang}.srt",
-            OverwriteBehavior::Skip,
-            &source,
-            "de",
-        )
-        .unwrap_err();
+        let err = resolve_output_path("{name}.{lang}.srt", OverwriteBehavior::Skip, &source, "de")
+            .unwrap_err();
         assert!(err.contains("skip"), "{err}");
     }
 
@@ -660,13 +671,8 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let source = dir.path().join("E01.mkv");
         std::fs::write(&source, b"x").unwrap();
-        let out = resolve_output_path(
-            "{name}.{lang}.srt",
-            OverwriteBehavior::Skip,
-            &source,
-            "de",
-        )
-        .unwrap();
+        let out = resolve_output_path("{name}.{lang}.srt", OverwriteBehavior::Skip, &source, "de")
+            .unwrap();
         assert_eq!(out, dir.path().join("E01.de.srt"));
     }
 }

@@ -89,9 +89,7 @@ pub async fn list(
             }));
         }
         let key = resolve_key(&state, provider).await?;
-        if let Some(url) =
-            custom_models_url(&server, endpoint.as_deref(), explicit.as_deref())
-        {
+        if let Some(url) = custom_models_url(&server, endpoint.as_deref(), explicit.as_deref()) {
             match list_models_custom(&state.http, &url, key.as_deref()).await {
                 Ok(models) => {
                     return Ok(Json(ModelsResponse {

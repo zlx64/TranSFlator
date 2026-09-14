@@ -64,7 +64,10 @@ impl PathGuard {
             return Err(GuardError::Traversal);
         }
         // Reject any `..` component outright (defense in depth).
-        if rel_path.components().any(|c| matches!(c, Component::ParentDir)) {
+        if rel_path
+            .components()
+            .any(|c| matches!(c, Component::ParentDir))
+        {
             return Err(GuardError::Traversal);
         }
 
@@ -144,8 +147,6 @@ impl From<GuardError> for crate::model::MediaError {
 fn io_to_guard(e: std::io::Error) -> GuardError {
     if e.kind() == std::io::ErrorKind::PermissionDenied {
         GuardError::PermissionDenied(e.to_string())
-    } else if e.kind() == std::io::ErrorKind::NotFound {
-        GuardError::NotFound(e.to_string())
     } else {
         GuardError::NotFound(e.to_string())
     }

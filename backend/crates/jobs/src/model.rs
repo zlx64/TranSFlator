@@ -84,10 +84,11 @@ pub struct Job {
 }
 
 /// How a retry should behave (FR-18, §6.11).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RetryMode {
     /// Fresh re-run of the whole pipeline.
+    #[default]
     Rerun,
     /// `--retranslate`: re-translate everything (project file must exist).
     Retranslate,
@@ -111,12 +112,6 @@ impl RetryMode {
             "reparse" => Some(Self::Reparse),
             _ => None,
         }
-    }
-}
-
-impl Default for RetryMode {
-    fn default() -> Self {
-        Self::Rerun
     }
 }
 
